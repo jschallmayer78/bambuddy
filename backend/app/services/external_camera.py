@@ -305,6 +305,36 @@ def _log_key(key: tuple[str, str, str | None]) -> str:
     return redact_url_credentials(key[0])[:50] if key[0] else "None"
 
 
+# A Snapmaker U1 is addressed by its Moonraker base URL rather than by a media
+# URL, so it rides through this module as its own camera type instead of being
+# configured as a generic MJPEG source. It cannot be one: without the
+# start_monitor keepalive the printer stops refreshing monitor.jpg and the
+# picture silently freezes.
+CAMERA_TYPE_SNAPMAKER_U1 = "snapmaker_u1"
+
+
+def _snapmaker_client(url: str):
+    from backend.app.services.snapmaker.moonraker import MoonrakerClient
+
+    return MoonrakerClient(url)
+
+
+async def _capture_snapmaker_frame(url: str, timeout: int) -> bytes | None:
+    from backend.app.services.snapmaker.camera import capture_frame as _u1_capture
+
+    client = _snapmaker_client(url)
+    try:
+        return await asyncio.wait_for(_u1_capture(client), timeout=timeout)
+    except (TimeoutError, asyncio.TimeoutError):
+        logger.warning("Snapmaker camera capture timed out after %ss (%s)", timeout, url)
+        return None
+    except Exception as exc:
+        logger.warning("Snapmaker camera capture failed (%s): %s", url, exc)
+        return None
+    finally:
+        await client.close()
+
+
 async def capture_frame(
     url: str,
     camera_type: str,
@@ -424,6 +454,8 @@ async def _capture_frame_uncoalesced(
             camera_type,
             redact_url_credentials(url)[:50] if url else "None",
         )
+        if camera_type == CAMERA_TYPE_SNAPMAKER_U1:
+            return await _capture_snapmaker_frame(url, timeout)
         if camera_type == "mjpeg":
             return await _capture_mjpeg_frame(url, timeout)
         elif camera_type == "rtsp":
@@ -920,6 +952,18 @@ async def generate_mjpeg_stream(
             except Exception:
                 logger.exception("on_frame callback raised")
         return _format_mjpeg_frame(frame)
+
+    if camera_type == CAMERA_TYPE_SNAPMAKER_U1:
+        # The U1 has no stream to proxy: its camera plugin writes one JPEG that
+        # only keeps refreshing while something holds a keepalive open. The
+        # Snapmaker module owns that dance; everything downstream sees ordinary
+        # multipart MJPEG. _publish is bypassed because that generator calls
+        # on_frame itself, with the raw frame, before wrapping it.
+        from backend.app.services.snapmaker.camera import generate_mjpeg_stream as _u1_stream
+
+        async for frame in _u1_stream(_snapmaker_client(url), fps, on_frame=on_frame, stop_event=stop_event):
+            yield frame
+        return
 
     if camera_type == "mjpeg":
         # Proxy MJPEG stream directly, with reconnect on timeout

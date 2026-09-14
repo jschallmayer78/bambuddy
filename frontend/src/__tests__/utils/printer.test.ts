@@ -97,6 +97,21 @@ describe('getPrinterImage', () => {
       );
     });
   });
+
+  describe('Snapmaker U1', () => {
+    it('U1 → default.png (no U1 artwork ships with Bambuddy)', () => {
+      expect(getPrinterImage('U1')).toBe('/img/printers/default.png');
+      expect(getPrinterImage('u1')).toBe('/img/printers/default.png');
+      expect(getPrinterImage('Snapmaker U1')).toBe('/img/printers/default.png');
+    });
+
+    it('never borrows a Bambu model image', () => {
+      // The U1 branch runs before the Bambu table precisely so a model string
+      // containing "u1" can't fall through into one of its substring checks.
+      expect(getPrinterImage('U1')).not.toBe('/img/printers/x1c.png');
+      expect(getPrinterImage('U1')).not.toBe('/img/printers/a1.png');
+    });
+  });
 });
 
 // Mirrors backend/tests/unit/test_scheduler_model_mismatch.py — the frontend

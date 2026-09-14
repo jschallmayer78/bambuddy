@@ -175,6 +175,108 @@ describe('ConnectionDiagnosticModal', () => {
     spy.mockRestore();
   });
 
+  it('renders the Snapmaker U1 checks with their own advice, not Bambu advice', async () => {
+    const spy = vi.spyOn(api, 'diagnosePrinter').mockResolvedValue({
+      printer_id: 2,
+      ip_address: '192.168.1.9',
+      // The Snapmaker run summarises as pass/fail rather than ok/problems.
+      overall: 'fail',
+      checks: [
+        { id: 'moonraker', status: 'pass', params: {} },
+        { id: 'snapmaker_identity', status: 'pass', params: { machine_type: 'U1' } },
+        { id: 'klipper_ready', status: 'fail', params: { state: 'shutdown' } },
+      ],
+    });
+
+    renderModal({ printerId: 2, printerName: 'Workshop U1', onClose: vi.fn() });
+
+    await waitFor(() => expect(spy).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText(/Printer API \(Moonraker\)/i)).toBeInTheDocument();
+    expect(screen.getByText(/Identified as a Snapmaker U1/i)).toBeInTheDocument();
+    // The halted firmware gets the restart advice, with its reported state.
+    expect(screen.getByText(/reports .shutdown. instead of ready/i)).toBeInTheDocument();
+    expect(screen.getByText(/FIRMWARE_RESTART/)).toBeInTheDocument();
+
+    // None of Bambu's vocabulary leaks into a U1 result.
+    expect(screen.queryByText(/Developer Mode/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/access code/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/LAN Only/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/8883|990/)).not.toBeInTheDocument();
+
+    // The pass/fail summary resolves to a real sentence, not a raw i18n key.
+    expect(screen.getByText(/Found problems that explain why the printer/i)).toBeInTheDocument();
+
+    spy.mockRestore();
+  });
+
+  it('explains an unreachable Moonraker and skips the checks behind it', async () => {
+    const spy = vi.spyOn(api, 'diagnosePrinter').mockResolvedValue({
+      printer_id: 2,
+      ip_address: '192.168.1.9',
+      overall: 'fail',
+      checks: [
+        { id: 'moonraker', status: 'fail', params: { error: 'connection refused' } },
+        { id: 'snapmaker_identity', status: 'skip', params: {} },
+        { id: 'klipper_ready', status: 'skip', params: {} },
+      ],
+    });
+
+    renderModal({ printerId: 2, printerName: 'Workshop U1', onClose: vi.fn() });
+
+    await waitFor(() => expect(spy).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText(/No answer from the printer at this address/i)).toBeInTheDocument();
+    expect(screen.getByText(/connection refused/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/the printer could not be reached/i)).toHaveLength(2);
+
+    spy.mockRestore();
+  });
+
+  it('picks the transport-error variant when klipper_ready reports no state', async () => {
+    const spy = vi.spyOn(api, 'diagnosePrinter').mockResolvedValue({
+      printer_id: 2,
+      ip_address: '192.168.1.9',
+      overall: 'fail',
+      checks: [
+        { id: 'moonraker', status: 'pass', params: {} },
+        // Community firmware: answers, but reports no product_info.
+        { id: 'snapmaker_identity', status: 'warn', params: { machine_type: '' } },
+        { id: 'klipper_ready', status: 'fail', params: { error: 'timed out' } },
+      ],
+    });
+
+    renderModal({ printerId: 2, printerName: 'Workshop U1', onClose: vi.fn() });
+
+    await waitFor(() => expect(spy).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText(/firmware state could not be read/i)).toBeInTheDocument();
+    // The state-based sentence would have interpolated a blank here.
+    expect(screen.queryByText(/instead of ready/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/does not identify itself as a Snapmaker/i)).toBeInTheDocument();
+
+    spy.mockRestore();
+  });
+
+  it('drops the machine type from the identity line when the printer reports none', async () => {
+    const spy = vi.spyOn(api, 'diagnosePrinter').mockResolvedValue({
+      printer_id: 2,
+      ip_address: '192.168.1.9',
+      overall: 'pass',
+      checks: [
+        { id: 'moonraker', status: 'pass', params: {} },
+        { id: 'snapmaker_identity', status: 'pass', params: { machine_type: '' } },
+        { id: 'klipper_ready', status: 'pass', params: { state: 'ready' } },
+      ],
+    });
+
+    renderModal({ printerId: 2, printerName: 'Workshop U1', onClose: vi.fn() });
+
+    await waitFor(() => expect(spy).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText('Identified as Snapmaker firmware.')).toBeInTheDocument();
+    // A passing Snapmaker run gets the healthy banner, not the failure one.
+    expect(screen.getByText(/No problems found/i)).toBeInTheDocument();
+
+    spy.mockRestore();
+  });
+
   it('falls back to the generic skip text when no reason is present', async () => {
     const spy = vi.spyOn(api, 'diagnosePrinter').mockResolvedValue({
       ...PROBLEM_RESULT,

@@ -90,4 +90,71 @@ describe('AddPrinterModal pre-flight', () => {
     await waitFor(() => expect(created).toBe(true));
     expect(screen.queryByText(/Some connection checks failed/i)).not.toBeInTheDocument();
   });
+
+  it('uses the plain connection test for a Snapmaker U1 and derives its serial', async () => {
+    const user = userEvent.setup();
+    let diagnosticCalls = 0;
+    let probedType: string | null = null;
+    let created: Record<string, unknown> | null = null;
+    server.use(
+      http.post('/api/v1/printers/diagnostic', () => {
+        diagnosticCalls += 1;
+        return HttpResponse.json({ printer_id: null, ip_address: '', overall: 'ok', checks: [] });
+      }),
+      http.post('/api/v1/printers/test', ({ request }) => {
+        probedType = new URL(request.url).searchParams.get('printer_type');
+        return HttpResponse.json({ success: true, model: 'U1' });
+      }),
+      http.post('/api/v1/printers/', async ({ request }) => {
+        created = (await request.json()) as Record<string, unknown>;
+        return HttpResponse.json({ id: 10, name: 'Shop U1' });
+      }),
+    );
+
+    render(<PrintersPage />);
+    await user.click(await screen.findByText(/add printer/i));
+    await user.selectOptions(await screen.findByLabelText(/printer type/i), 'snapmaker_u1');
+
+    // Neither serial nor access code is filled in: a U1 has neither.
+    await user.type(await screen.findByPlaceholderText('My Printer'), 'Shop U1');
+    await user.type(screen.getByPlaceholderText('192.168.1.100 or printer.local'), '192.168.1.9');
+
+    const submit = screen
+      .getAllByRole('button', { name: /add printer/i })
+      .find((b) => b.getAttribute('type') === 'submit')!;
+    await user.click(submit);
+
+    await waitFor(() => expect(created).not.toBeNull());
+    expect(created!.printer_type).toBe('snapmaker_u1');
+    // The backend requires a unique non-empty serial; a blank field derives one.
+    expect(created!.serial_number).toBe('u1-192-168-1-9');
+    expect(probedType).toBe('snapmaker_u1');
+    // The Bambu port diagnostic would warn about ports a U1 never opens.
+    expect(diagnosticCalls).toBe(0);
+  });
+
+  it('warns with the probe reason when a Snapmaker U1 does not answer', async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.post('/api/v1/printers/test', () =>
+        HttpResponse.json({ success: false, reason: 'Moonraker did not respond' }),
+      ),
+    );
+
+    render(<PrintersPage />);
+    await user.click(await screen.findByText(/add printer/i));
+    await user.selectOptions(await screen.findByLabelText(/printer type/i), 'snapmaker_u1');
+    await user.type(await screen.findByPlaceholderText('My Printer'), 'Shop U1');
+    await user.type(screen.getByPlaceholderText('192.168.1.100 or printer.local'), '192.168.1.9');
+
+    const submit = screen
+      .getAllByRole('button', { name: /add printer/i })
+      .find((b) => b.getAttribute('type') === 'submit')!;
+    await user.click(submit);
+
+    expect(await screen.findByText('Moonraker did not respond')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /save anyway/i })).toBeInTheDocument();
+    // No Bambu checklist: there are no Bambu checks to show.
+    expect(screen.queryByText(/LAN Developer Mode/i)).not.toBeInTheDocument();
+  });
 });

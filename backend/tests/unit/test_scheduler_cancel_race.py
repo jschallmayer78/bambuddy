@@ -103,7 +103,7 @@ async def queue_factory(tmp_path):
                 archive_id=archive.id,
                 queue_item_id=item.id,
                 upload=AsyncMock(return_value=True),
-                start_print=MagicMock(return_value=True),
+                start_print=AsyncMock(return_value=True),
                 delete_file=AsyncMock(return_value=True),
             )
 

@@ -1,6 +1,11 @@
 export function getPrinterImage(model: string | null | undefined): string {
   if (!model) return '/img/printers/default.png';
   const m = model.toLowerCase().replace(/\s+/g, '');
+  // Snapmaker U1. Bambuddy ships no U1 artwork and inventing one (or reusing a
+  // Bambu model's) would mislabel the machine on its own card, so it takes the
+  // generic silhouette. Matched before the Bambu table so a future "…u1…" model
+  // code can't fall into one of those substring checks.
+  if (m.includes('u1') || m.includes('snapmaker')) return '/img/printers/default.png';
   if (m.includes('x1e')) return '/img/printers/x1e.png';
   if (m.includes('x1c') || m.includes('x1carbon')) return '/img/printers/x1c.png';
   if (m.includes('x1')) return '/img/printers/x1c.png';

@@ -6,6 +6,16 @@ import pytest
 from backend.app import main as main_module
 
 
+def _async_stop(stop_calls: list):
+    """An awaitable stand-in for printer_manager.stop_print that records calls."""
+
+    async def _stop(printer_id):
+        stop_calls.append(printer_id)
+        return True
+
+    return _stop
+
+
 @pytest.fixture(autouse=True)
 def clear_kill_switch_state():
     main_module._kill_switch_setting_cache = None
@@ -57,7 +67,11 @@ async def test_unauthorized_active_print_triggers_stop(monkeypatch):
 
     monkeypatch.setattr(main_module.printer_manager, "get_current_print_user", lambda printer_id: None)
     monkeypatch.setattr(
-        main_module.printer_manager, "stop_print", lambda printer_id: stop_calls.append(printer_id) or True
+        # stop_print is a coroutine function now — it may be talking to an
+        # HTTP-based printer — so the stand-in has to be awaitable too.
+        main_module.printer_manager,
+        "stop_print",
+        _async_stop(stop_calls),
     )
     monkeypatch.setattr(main_module.printer_manager, "get_printer", lambda printer_id: None)
     monkeypatch.setattr(main_module.printer_manager, "get_model", lambda printer_id: None)
@@ -152,7 +166,11 @@ async def test_bambuddy_authorized_print_is_not_stopped(monkeypatch):
 
     monkeypatch.setattr(main_module.printer_manager, "get_current_print_user", lambda printer_id: None)
     monkeypatch.setattr(
-        main_module.printer_manager, "stop_print", lambda printer_id: stop_calls.append(printer_id) or True
+        # stop_print is a coroutine function now — it may be talking to an
+        # HTTP-based printer — so the stand-in has to be awaitable too.
+        main_module.printer_manager,
+        "stop_print",
+        _async_stop(stop_calls),
     )
     monkeypatch.setattr(main_module.printer_manager, "get_printer", lambda printer_id: None)
     monkeypatch.setattr(main_module.printer_manager, "get_model", lambda printer_id: None)
@@ -230,7 +248,11 @@ async def test_unauthorized_print_state_is_cleared_when_print_ends(monkeypatch):
 
     monkeypatch.setattr(main_module.printer_manager, "get_current_print_user", lambda printer_id: None)
     monkeypatch.setattr(
-        main_module.printer_manager, "stop_print", lambda printer_id: stop_calls.append(printer_id) or True
+        # stop_print is a coroutine function now — it may be talking to an
+        # HTTP-based printer — so the stand-in has to be awaitable too.
+        main_module.printer_manager,
+        "stop_print",
+        _async_stop(stop_calls),
     )
     monkeypatch.setattr(main_module.printer_manager, "get_printer", lambda printer_id: None)
     monkeypatch.setattr(main_module.printer_manager, "get_model", lambda printer_id: None)
@@ -343,7 +365,11 @@ async def test_persisted_print_is_authorized_after_restart(monkeypatch, printer_
     monkeypatch.setattr(main_module, "spawn_background_task", discard_background_task)
     monkeypatch.setattr(main_module.printer_manager, "get_current_print_user", lambda printer_id: None)
     monkeypatch.setattr(
-        main_module.printer_manager, "stop_print", lambda printer_id: stop_calls.append(printer_id) or True
+        # stop_print is a coroutine function now — it may be talking to an
+        # HTTP-based printer — so the stand-in has to be awaitable too.
+        main_module.printer_manager,
+        "stop_print",
+        _async_stop(stop_calls),
     )
     monkeypatch.setattr(main_module.printer_manager, "get_printer", lambda printer_id: None)
     monkeypatch.setattr(main_module.printer_manager, "get_model", lambda printer_id: None)

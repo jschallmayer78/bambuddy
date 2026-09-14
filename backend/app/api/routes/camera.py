@@ -45,6 +45,7 @@ from backend.app.services.camera_fanout import (
     shutdown_broadcaster,
 )
 from backend.app.services.camera_profiles import get_camera_profile
+from backend.app.services.camera_source import resolve_camera_source
 from backend.app.utils.ffmpeg_output import summarize_ffmpeg_stderr
 
 logger = logging.getLogger(__name__)
@@ -881,8 +882,11 @@ async def camera_stream(
     async with database.async_session() as db:
         printer = await get_printer_or_404(printer_id, db)
 
-    # Check for external camera first
-    if printer.external_camera_enabled and printer.external_camera_url:
+    # Which camera this printer has: a configured external one, or a built-in
+    # camera the external machinery can open (a Snapmaker U1's). Anything else
+    # falls through to the Bambu-native paths below.
+    camera = resolve_camera_source(printer)
+    if camera.usable:
         # NB: no `import time` / `import uuid` here, and don't reintroduce them.
         # A local import anywhere in this function makes the name function-local
         # for the WHOLE function, so the RTSP/chamber path below — which never
@@ -892,9 +896,7 @@ async def camera_stream(
 
         # Limit external camera FPS to reduce browser load
         fps = min(max(fps, 1), 15)
-        logger.info(
-            "Using external camera (%s) for printer %s at %s fps", printer.external_camera_type, printer_id, fps
-        )
+        logger.info("Using external camera (%s) for printer %s at %s fps", camera.type, printer_id, fps)
 
         # Register the stream into the SAME registries the RTSP/chamber paths use
         # (#2675) so `/camera/stop` and cleanup_orphaned_streams can find and kill
@@ -939,8 +941,8 @@ async def camera_stream(
             """Wrap external stream to track start/stop and update frame times."""
             try:
                 async for frame in generate_mjpeg_stream(
-                    printer.external_camera_url,
-                    printer.external_camera_type,
+                    camera.url,
+                    camera.type,
                     fps,
                     on_process=_register_external_process,
                     on_frame=_publish_external_frame,
@@ -1186,15 +1188,17 @@ async def camera_snapshot(
     async with database.async_session() as db:
         printer = await get_printer_or_404(printer_id, db)
 
-    # Check for external camera first
-    if printer.external_camera_enabled and printer.external_camera_url:
+    # Check for a non-native camera first (configured external, or built-in
+    # on a printer whose protocol the external machinery speaks).
+    camera = resolve_camera_source(printer)
+    if camera.usable:
         from backend.app.services.external_camera import capture_frame
 
         frame_data = await capture_frame(
-            printer.external_camera_url,
-            printer.external_camera_type,
+            camera.url,
+            camera.type,
             timeout=15,
-            snapshot_url=printer.external_camera_snapshot_url,
+            snapshot_url=camera.snapshot_url,
         )
         if not frame_data:
             raise HTTPException(
@@ -1456,9 +1460,7 @@ async def check_plate_empty(
     printer = await get_printer_or_404(printer_id, db)
 
     if use_external is None:
-        use_external = bool(
-            printer.external_camera_enabled and printer.external_camera_url and printer.external_camera_type
-        )
+        use_external = resolve_camera_source(printer).usable
 
     if not is_plate_detection_available():
         raise HTTPException(
@@ -1498,11 +1500,11 @@ async def check_plate_empty(
         model=printer.model,
         plate_type=plate_type,
         include_debug_image=include_debug_image,
-        external_camera_url=printer.external_camera_url if printer.external_camera_enabled else None,
-        external_camera_type=printer.external_camera_type if printer.external_camera_enabled else None,
+        external_camera_url=resolve_camera_source(printer).url,
+        external_camera_type=resolve_camera_source(printer).type,
         use_external=use_external,
         roi=roi,
-        external_camera_snapshot_url=printer.external_camera_snapshot_url if printer.external_camera_enabled else None,
+        external_camera_snapshot_url=resolve_camera_source(printer).snapshot_url,
     )
 
     # Get reference count for the response
@@ -1572,9 +1574,7 @@ async def calibrate_plate_detection(
     printer = await get_printer_or_404(printer_id, db)
 
     if use_external is None:
-        use_external = bool(
-            printer.external_camera_enabled and printer.external_camera_url and printer.external_camera_type
-        )
+        use_external = resolve_camera_source(printer).usable
 
     if not is_plate_detection_available():
         raise HTTPException(
@@ -1592,10 +1592,10 @@ async def calibrate_plate_detection(
         access_code=printer.access_code,
         model=printer.model,
         label=label,
-        external_camera_url=printer.external_camera_url if printer.external_camera_enabled else None,
-        external_camera_type=printer.external_camera_type if printer.external_camera_enabled else None,
+        external_camera_url=resolve_camera_source(printer).url,
+        external_camera_type=resolve_camera_source(printer).type,
         use_external=use_external,
-        external_camera_snapshot_url=printer.external_camera_snapshot_url if printer.external_camera_enabled else None,
+        external_camera_snapshot_url=resolve_camera_source(printer).snapshot_url,
     )
 
     if light_warning and success:

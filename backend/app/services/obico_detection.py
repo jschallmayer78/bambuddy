@@ -21,6 +21,7 @@ from sqlalchemy import select
 from backend.app.core.database import async_session
 from backend.app.models.printer import Printer
 from backend.app.models.settings import Settings
+from backend.app.services.camera_source import resolve_camera_source
 from backend.app.services.obico_smoothing import (
     PrintState,
     classify,
@@ -215,7 +216,8 @@ class ObicoDetectionService:
             self._last_error = f"Printer {printer_id} not found"
             return None
 
-        if printer.external_camera_enabled and printer.external_camera_url:
+        camera = resolve_camera_source(printer)
+        if camera.usable:
             # Same rule as the built-in branch below, which this used to skip:
             # an external camera is single-reader too, so polling while a viewer
             # is attached just fails (#2707).
@@ -232,10 +234,10 @@ class ObicoDetectionService:
                 )
                 return None
             return await capture_external_frame(
-                printer.external_camera_url,
-                printer.external_camera_type,
+                camera.url,
+                camera.type,
                 timeout=SNAPSHOT_CAPTURE_TIMEOUT,
-                snapshot_url=printer.external_camera_snapshot_url,
+                snapshot_url=camera.snapshot_url,
             )
 
         # Reuse the fan-out broadcaster's buffered frame when a viewer is

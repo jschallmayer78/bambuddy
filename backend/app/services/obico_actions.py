@@ -21,7 +21,7 @@ async def execute_action(printer_id: int, action: str, task_name: str, score: fl
     printer_name = await _get_printer_name(printer_id)
 
     if action in ("pause", "pause_and_off"):
-        _pause_print(printer_id)
+        await _pause_print(printer_id)
 
     if action == "pause_and_off":
         await _turn_off_linked_plugs(printer_id)
@@ -36,14 +36,17 @@ async def _get_printer_name(printer_id: int) -> str:
     return printer.name if printer else f"Printer {printer_id}"
 
 
-def _pause_print(printer_id: int) -> None:
+async def _pause_print(printer_id: int) -> None:
+    from backend.app.services.printer_drivers.base import call_driver
     from backend.app.services.printer_manager import printer_manager
 
     client = printer_manager.get_client(printer_id)
     if not client:
-        logger.warning("Obico pause: no MQTT client for printer %s", printer_id)
+        logger.warning("Obico pause: printer %s is not connected", printer_id)
         return
-    if not client.pause_print():
+    # await-tolerant: pausing an HTTP-based printer is a request, not a publish,
+    # and a coroutine left unawaited here would mean the print never paused.
+    if not await call_driver(client, "pause_print"):
         logger.warning("Obico pause: pause_print() returned False for printer %s", printer_id)
 
 

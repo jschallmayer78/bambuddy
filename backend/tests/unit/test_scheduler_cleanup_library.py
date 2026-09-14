@@ -161,7 +161,7 @@ async def queue_factory(tmp_path):
                 other_library_file_id=other_file.id if other_file is not None else None,
                 archive_path=None,
                 upload=AsyncMock(return_value=True),
-                start_print=MagicMock(return_value=True),
+                start_print=AsyncMock(return_value=True),
             )
 
     try:

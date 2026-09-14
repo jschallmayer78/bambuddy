@@ -735,6 +735,8 @@ Full documentation available at **[wiki.bambuddy.cool](http://wiki.bambuddy.cool
 
 ## 🖨️ Supported Printers
 
+### Bambu Lab
+
 | Series | Models |
 |--------|--------|
 | X1 | X1, X1 Carbon, X1E |
@@ -744,6 +746,17 @@ Full documentation available at **[wiki.bambuddy.cool](http://wiki.bambuddy.cool
 | P2 | P2S |
 | A1 | A1, A1 Mini |
 | A2 | A2L |
+
+### Snapmaker
+
+| Series | Models |
+|--------|--------|
+| U1 | U1 |
+
+The U1 speaks Klipper/Moonraker rather than Bambu's MQTT, so it is added with
+a printer type of **Snapmaker U1** and needs no access code. See
+[docs/snapmaker-u1.md](docs/snapmaker-u1.md) for what is supported, what is
+not, and why.
 
 ---
 

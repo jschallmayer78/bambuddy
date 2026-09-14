@@ -93,7 +93,7 @@ async def billing_dispatch_case(tmp_path):
 
 async def _dispatch(ctx, *, uploaded: bool = True, cancel_during_upload: bool = False):
     scheduler = PrintScheduler()
-    start_print = MagicMock(return_value=True)
+    start_print = AsyncMock(return_value=True)
 
     async def upload(*_args, **_kwargs):
         if cancel_during_upload:

@@ -12,8 +12,8 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlparse
 
-from fastapi import FastAPI
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import delete, or_, select, text
 
@@ -101,6 +101,7 @@ from backend.app.services.bambu_ftp import (
     with_ftp_retry,
 )
 from backend.app.services.bambu_mqtt import PrinterState
+from backend.app.services.camera_source import resolve_camera_source
 from backend.app.services.energy_plug import energy_plug_candidates, select_energy_reading
 from backend.app.services.github_backup import github_backup_service
 from backend.app.services.ha_sensor_manager import ha_sensor_manager
@@ -119,6 +120,12 @@ from backend.app.services.print_storage import (
     external_storage_present,
     ftp_probe_paths,
     print_file_reachable_over_ftp,
+)
+from backend.app.services.printer_drivers.base import (
+    UnsupportedOperation,
+    call_driver,
+    dispatch_driver,
+    supports as driver_supports,
 )
 from backend.app.services.printer_manager import (
     init_printer_connections,
@@ -1277,16 +1284,17 @@ def _maybe_start_layer_timelapse(printer, printer_id: int, archive_id: int) -> b
     on the first pass). Centralising the conditional + call here makes the
     contract testable in isolation and keeps the three sites locked in step.
     """
-    if not (printer.external_camera_enabled and printer.external_camera_url):
+    source = resolve_camera_source(printer)
+    if not source.usable:
         return False
     from backend.app.services.layer_timelapse import start_session
 
     start_session(
         printer_id,
         archive_id,
-        printer.external_camera_url,
-        printer.external_camera_type or "mjpeg",
-        snapshot_url=printer.external_camera_snapshot_url,
+        source.url,
+        source.type or "mjpeg",
+        snapshot_url=source.snapshot_url,
         rotation=getattr(printer, "camera_rotation", 0),
     )
     logging.getLogger(__name__).info("Started layer timelapse for printer %s, archive %s", printer_id, archive_id)
@@ -1626,7 +1634,7 @@ async def on_printer_status_change(printer_id: int, state: PrinterState):
             )
         else:
             try:
-                stopped = printer_manager.stop_print(printer_id)
+                stopped = await printer_manager.stop_print(printer_id)
                 if stopped:
                     _unauthorized_print_kill_sent.add(printer_id)
                     printer_info = printer_manager.get_printer(printer_id)
@@ -2425,7 +2433,7 @@ async def on_ams_change(printer_id: int, ams_data: list):
                                         # MQTT push during steady-state operation.
                                         if live_cali_idx != chosen_kp.cali_idx:
                                             client = printer_manager.get_client(printer_id)
-                                            if client:
+                                            if client and driver_supports(client, "extrusion_cali_sel"):
                                                 cali_filament_id = spool.slicer_filament or tray_info_idx or ""
                                                 client.extrusion_cali_sel(
                                                     ams_id=ams_id,
@@ -2817,8 +2825,11 @@ async def _capture_snapshot_for_notification(printer_id: int, printer, logger) -
         if capture_enabled is not None and capture_enabled.lower() != "true":
             return None
 
-        # Try external camera first
-        if printer.external_camera_enabled and printer.external_camera_url:
+        # Try the printer's non-native camera first (a configured external
+        # one, or a built-in camera that the external machinery can open —
+        # e.g. a Snapmaker U1's).
+        _camera = resolve_camera_source(printer)
+        if _camera.usable:
             logger.info("[SNAPSHOT] Capturing from external camera for printer %s", printer_id)
             from backend.app.api.routes.camera import live_frame_for_capture
             from backend.app.services.external_camera import capture_frame
@@ -2831,9 +2842,9 @@ async def _capture_snapshot_for_notification(printer_id: int, printer, logger) -
                 frame_data = buffered
             else:
                 frame_data = await capture_frame(
-                    printer.external_camera_url,
-                    printer.external_camera_type or "mjpeg",
-                    snapshot_url=printer.external_camera_snapshot_url,
+                    _camera.url,
+                    _camera.type or "mjpeg",
+                    snapshot_url=_camera.snapshot_url,
                 )
             if frame_data and len(frame_data) <= 2_500_000:
                 logger.info("[SNAPSHOT] External camera frame: %s bytes", len(frame_data))
@@ -3452,17 +3463,21 @@ async def on_print_start(printer_id: int, data: dict):
                         printer.plate_detection_roi_h,
                     )
 
-                # Auto-turn on chamber light if it's off for better detection
+                # Auto-turn on chamber light if it's off for better detection.
+                # Guarded on the driver: a printer whose protocol has no
+                # controllable chamber light (a Snapmaker U1) must still get a
+                # plate check, just without the lighting help.
                 light_was_off = False
                 client = printer_manager.get_client(printer_id)
-                if client and client.state:
+                if client and client.state and driver_supports(client, "set_chamber_light"):
                     light_was_off = not client.state.chamber_light
                     if light_was_off:
                         logger.info("[PLATE CHECK] Turning on chamber light for printer %s", printer_id)
-                        client.set_chamber_light(True)
+                        await call_driver(client, "set_chamber_light", True)
                         # Wait for light to physically turn on and camera to adjust exposure
                         await asyncio.sleep(2.5)
 
+                _plate_camera = resolve_camera_source(printer)
                 logger.info("[PLATE CHECK] Running plate detection for printer %s", printer_id)
                 plate_result = await check_plate_empty(
                     printer_id=printer_id,
@@ -3470,17 +3485,17 @@ async def on_print_start(printer_id: int, data: dict):
                     access_code=printer.access_code,
                     model=printer.model,
                     include_debug_image=False,
-                    external_camera_url=printer.external_camera_url,
-                    external_camera_type=printer.external_camera_type,
-                    use_external=printer.external_camera_enabled,
+                    external_camera_url=_plate_camera.url,
+                    external_camera_type=_plate_camera.type,
+                    use_external=_plate_camera.usable,
                     roi=roi,
-                    external_camera_snapshot_url=printer.external_camera_snapshot_url,
+                    external_camera_snapshot_url=_plate_camera.snapshot_url,
                 )
 
                 # Restore chamber light to original state
                 if light_was_off and client:
                     logger.info("[PLATE CHECK] Restoring chamber light to off for printer %s", printer_id)
-                    client.set_chamber_light(False)
+                    await call_driver(client, "set_chamber_light", False)
 
                 if not plate_result.needs_calibration and not plate_result.is_empty:
                     # Objects detected - pause the print!
@@ -3490,7 +3505,7 @@ async def on_print_start(printer_id: int, data: dict):
                     )
                     client = printer_manager.get_client(printer_id)
                     if client:
-                        client.pause_print()
+                        await call_driver(client, "pause_print")
                         logger.info("[PLATE CHECK] Print paused for printer %s", printer_id)
 
                     # Send notification about plate not empty
@@ -5750,7 +5765,7 @@ async def _restore_plate_for_finish_photo(printer_id: int, max_z_height: float, 
         return False
 
     target_z = max_z_height + _PLATE_RESTORE_CLEARANCE_MM
-    if not client.send_gcode(f"G90\nG1 Z{target_z:.2f} F{_PLATE_RESTORE_FEEDRATE}"):
+    if not await call_driver(client, "send_gcode", f"G90\nG1 Z{target_z:.2f} F{_PLATE_RESTORE_FEEDRATE}"):
         logger.warning("[PLATE-RESTORE] printer %s: send failed — capturing where it is", printer_id)
         return False
 
@@ -5779,7 +5794,9 @@ def _park_plate_after_finish_photo(printer_id: int, max_z_height: float, logger)
     state = getattr(client, "state", None) if client else None
     if client is None or state is None or state.state != "FINISH":
         return
-    client.send_gcode(f"G90\nG1 Z{max_z_height + _PLATE_PARK_DROP_MM:.2f} F{_PLATE_RESTORE_FEEDRATE}")
+    dispatch_driver(
+        client, "send_gcode", f"G90\nG1 Z{max_z_height + _PLATE_PARK_DROP_MM:.2f} F{_PLATE_RESTORE_FEEDRATE}"
+    )
     logger.debug("[PLATE-RESTORE] printer %s: plate returned to unload height", printer_id)
 
 
@@ -5950,7 +5967,8 @@ async def on_finish_photo_moment(printer_id: int, data: dict):
             elif await _restore_plate_for_finish_photo(printer_id, wants_restore, logger):
                 restore_max_z = wants_restore
 
-        if frame_bytes is None and printer.external_camera_enabled and printer.external_camera_url:
+        _camera = resolve_camera_source(printer)
+        if frame_bytes is None and _camera.usable:
             from backend.app.api.routes.camera import live_frame_for_capture
             from backend.app.services.external_camera import capture_frame
 
@@ -5962,9 +5980,9 @@ async def on_finish_photo_moment(printer_id: int, data: dict):
                 frame_bytes = buffered
             else:
                 frame_bytes = await capture_frame(
-                    printer.external_camera_url,
-                    printer.external_camera_type or "mjpeg",
-                    snapshot_url=printer.external_camera_snapshot_url,
+                    _camera.url,
+                    _camera.type or "mjpeg",
+                    snapshot_url=_camera.snapshot_url,
                 )
             if frame_bytes:
                 logger.info(
@@ -7215,7 +7233,7 @@ async def on_print_complete(printer_id: int, data: dict):
             # because it caused per-layer nozzle parking on Smooth-mode
             # slicer profiles.
             prefer_timelapse_source = bool(data.get("timelapse_was_active")) and not (
-                printer.external_camera_enabled and printer.external_camera_url
+                resolve_camera_source(printer).usable
             )
 
             timelapse_still_pending = False
@@ -7307,7 +7325,8 @@ async def on_print_complete(printer_id: int, data: dict):
             # fresh RTSP capture. Only runs if the timelapse path above
             # didn't already produce a photo.
             if not photo_filename:
-                if printer.external_camera_enabled and printer.external_camera_url:
+                _camera = resolve_camera_source(printer)
+                if _camera.usable:
                     logger.info("[PHOTO-BG] Using external camera")
                     from backend.app.api.routes.camera import live_frame_for_capture
                     from backend.app.services.external_camera import capture_frame
@@ -7320,9 +7339,9 @@ async def on_print_complete(printer_id: int, data: dict):
                         frame_data = buffered
                     else:
                         frame_data = await capture_frame(
-                            printer.external_camera_url,
-                            printer.external_camera_type or "mjpeg",
-                            snapshot_url=printer.external_camera_snapshot_url,
+                            _camera.url,
+                            _camera.type or "mjpeg",
+                            snapshot_url=_camera.snapshot_url,
                         )
                     if frame_data:
                         frame_data = _apply_camera_rotation(frame_data, printer, logger)
@@ -8479,6 +8498,10 @@ async def _recover_dead_printer_sessions() -> int:
 
     for printer_id, client in list(printer_manager._clients.items()):
         try:
+            # HTTP-based drivers have no MQTT session to rebuild, and no
+            # _last_message_time to age. Their own poll loop owns reconnecting.
+            if not driver_supports(client, "force_reconnect_stale_session"):
+                continue
             if client.state.connected:
                 _connection_watchdog_last_attempt.pop(printer_id, None)
                 continue
@@ -9295,6 +9318,32 @@ app = FastAPI(
     version=APP_VERSION,
     lifespan=lifespan,
 )
+
+
+@app.exception_handler(UnsupportedOperation)
+async def _unsupported_operation_handler(request: Request, exc: UnsupportedOperation):
+    """A control route asked a printer for something its protocol lacks.
+
+    501 rather than 500: the request was well-formed and the printer is fine,
+    Bambuddy simply cannot express the operation on that machine. The
+    operation's name travels in the body so the UI can say which control is
+    unavailable instead of showing a generic failure.
+
+    Bambuddy's Bambu surface is large — AMS slots, K-profiles, HMS actions,
+    drying, calibration stages — and most of it has no counterpart on a
+    Snapmaker U1. Rather than special-case every route, each driver declines
+    what it cannot do and that decline lands here.
+    """
+    return JSONResponse(
+        status_code=501,
+        content={
+            "detail": {
+                "code": "operation_not_supported",
+                "operation": exc.operation,
+                "message": str(exc),
+            }
+        },
+    )
 
 
 # =============================================================================

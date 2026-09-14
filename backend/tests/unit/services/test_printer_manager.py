@@ -172,7 +172,7 @@ class TestPrinterManager:
     @pytest.mark.asyncio
     async def test_connect_printer_creates_client(self, manager, mock_printer):
         """Verify connecting creates an MQTT client."""
-        with patch("backend.app.services.printer_manager.BambuMQTTClient") as MockClient:
+        with patch("backend.app.services.printer_manager.create_driver") as MockClient:
             mock_instance = MagicMock()
             mock_instance.state = MagicMock()
             mock_instance.state.connected = True
@@ -181,6 +181,9 @@ class TestPrinterManager:
             result = await manager.connect_printer(mock_printer)
 
             MockClient.assert_called_once()
+            # The protocol is chosen from the printer row and passed to the
+            # factory positionally; a row with no printer_type is a Bambu.
+            assert MockClient.call_args.args[0] == "bambu"
             mock_instance.connect.assert_called_once()
             assert mock_printer.id in manager._clients
             assert result is True
@@ -190,7 +193,7 @@ class TestPrinterManager:
         """Verify connecting disconnects existing client first."""
         manager._clients[mock_printer.id] = mock_client
 
-        with patch("backend.app.services.printer_manager.BambuMQTTClient") as MockClient:
+        with patch("backend.app.services.printer_manager.create_driver") as MockClient:
             new_client = MagicMock()
             new_client.state = MagicMock()
             new_client.state.connected = True
@@ -203,7 +206,7 @@ class TestPrinterManager:
     @pytest.mark.asyncio
     async def test_connect_printer_returns_false_on_failure(self, manager, mock_printer):
         """Verify returns False when connection fails."""
-        with patch("backend.app.services.printer_manager.BambuMQTTClient") as MockClient:
+        with patch("backend.app.services.printer_manager.create_driver") as MockClient:
             mock_instance = MagicMock()
             mock_instance.state = MagicMock()
             mock_instance.state.connected = False
@@ -376,12 +379,13 @@ class TestPrinterManager:
     # Tests for start_print
     # ========================================================================
 
-    def test_start_print_calls_client(self, manager, mock_client):
+    @pytest.mark.asyncio
+    async def test_start_print_calls_client(self, manager, mock_client):
         """Verify start_print calls client method."""
         mock_client.start_print.return_value = True
         manager._clients[1] = mock_client
 
-        result = manager.start_print(1, "test.gcode")
+        result = await manager.start_print(1, "test.gcode")
 
         mock_client.start_print.assert_called_once_with(
             "test.gcode",
@@ -399,18 +403,20 @@ class TestPrinterManager:
         )
         assert result is True
 
-    def test_start_print_returns_false_for_unknown(self, manager):
+    @pytest.mark.asyncio
+    async def test_start_print_returns_false_for_unknown(self, manager):
         """Verify start_print returns False for unknown printer."""
-        result = manager.start_print(999, "test.gcode")
+        result = await manager.start_print(999, "test.gcode")
         assert result is False
 
-    def test_start_print_logs_print_command_with_caller(self, manager, mock_client, caplog):
+    @pytest.mark.asyncio
+    async def test_start_print_logs_print_command_with_caller(self, manager, mock_client, caplog):
         """Verify start_print logs PRINT COMMAND with caller info (#374)."""
         mock_client.start_print.return_value = True
         manager._clients[1] = mock_client
 
         with caplog.at_level(logging.INFO, logger="backend.app.services.printer_manager"):
-            manager.start_print(1, "benchy.3mf")
+            await manager.start_print(1, "benchy.3mf")
 
         print_cmd_logs = [r for r in caplog.records if "PRINT COMMAND" in r.message]
         assert len(print_cmd_logs) == 1
@@ -419,10 +425,11 @@ class TestPrinterManager:
         assert "file=benchy.3mf" in log_msg
         assert "caller=" in log_msg
 
-    def test_start_print_logs_even_when_printer_unknown(self, manager, caplog):
+    @pytest.mark.asyncio
+    async def test_start_print_logs_even_when_printer_unknown(self, manager, caplog):
         """Verify PRINT COMMAND is logged even for unknown printers (#374)."""
         with caplog.at_level(logging.INFO, logger="backend.app.services.printer_manager"):
-            result = manager.start_print(999, "ghost.3mf")
+            result = await manager.start_print(999, "ghost.3mf")
 
         assert result is False
         print_cmd_logs = [r for r in caplog.records if "PRINT COMMAND" in r.message]
@@ -432,19 +439,21 @@ class TestPrinterManager:
     # Tests for stop_print
     # ========================================================================
 
-    def test_stop_print_calls_client(self, manager, mock_client):
+    @pytest.mark.asyncio
+    async def test_stop_print_calls_client(self, manager, mock_client):
         """Verify stop_print calls client method."""
         mock_client.stop_print.return_value = True
         manager._clients[1] = mock_client
 
-        result = manager.stop_print(1)
+        result = await manager.stop_print(1)
 
         mock_client.stop_print.assert_called_once()
         assert result is True
 
-    def test_stop_print_returns_false_for_unknown(self, manager):
+    @pytest.mark.asyncio
+    async def test_stop_print_returns_false_for_unknown(self, manager):
         """Verify stop_print returns False for unknown printer."""
-        result = manager.stop_print(999)
+        result = await manager.stop_print(999)
         assert result is False
 
     # ========================================================================

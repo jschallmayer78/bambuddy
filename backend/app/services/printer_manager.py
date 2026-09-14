@@ -3,6 +3,7 @@ import logging
 import re
 import traceback
 from collections.abc import Callable
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +16,12 @@ from backend.app.services.bambu_mqtt import (
     PrinterState,
     get_stage_name,
 )
+from backend.app.services.printer_drivers.base import (
+    PRINTER_TYPE_BAMBU,
+    call_driver,
+    normalize_printer_type,
+)
+from backend.app.services.printer_drivers.factory import create_driver
 from backend.app.utils.kprofile_lookup import build_slot_k_resolver
 
 logger = logging.getLogger(__name__)
@@ -402,7 +409,13 @@ class PrinterManager:
     """Manager for multiple printer connections."""
 
     def __init__(self):
-        self._clients: dict[int, BambuMQTTClient] = {}
+        # Live driver per printer. Typed loosely on purpose: the value is a
+        # BambuMQTTClient or any other driver satisfying
+        # services.printer_drivers.base.PrinterDriver.
+        self._clients: dict[int, Any] = {}
+        # Protocol per printer, so callers can ask what a machine is without
+        # a DB round-trip (and without inspecting the driver's class).
+        self._types: dict[int, str] = {}
         self._models: dict[int, str | None] = {}  # Cache printer models for feature detection
         self._printer_info: dict[int, PrinterInfo] = {}  # Cache printer name/serial for callbacks
         # Last AMS / external-spool reading of a printer whose client has been
@@ -815,7 +828,11 @@ class PrinterManager:
             if self._on_tray_change:
                 self._schedule_async(self._on_tray_change(printer_id, tray_global, layer_num))
 
-        client = BambuMQTTClient(
+        printer_type = normalize_printer_type(getattr(printer, "printer_type", None))
+        # Every driver takes the same keyword set and ignores what it has no
+        # use for, so this call site stays protocol-agnostic.
+        client = create_driver(
+            printer_type,
             ip_address=printer.ip_address,
             serial_number=printer.serial_number,
             access_code=printer.access_code,
@@ -837,6 +854,7 @@ class PrinterManager:
 
         client.connect()
         self._clients[printer_id] = client
+        self._types[printer_id] = printer_type
         self._models[printer_id] = printer.model  # Cache model for feature detection
         self._printer_info[printer_id] = PrinterInfo(printer.name, printer.serial_number)
 
@@ -851,6 +869,7 @@ class PrinterManager:
             self._clients[printer_id].disconnect(timeout=timeout)
             del self._clients[printer_id]
         self._models.pop(printer_id, None)  # Clean up model cache
+        self._types.pop(printer_id, None)
         self._printer_info.pop(printer_id, None)  # Clean up printer info cache
 
     def disconnect_all(self, timeout: float = 0):
@@ -918,9 +937,38 @@ class PrinterManager:
             return client.check_staleness()
         return False
 
-    def get_client(self, printer_id: int) -> BambuMQTTClient | None:
-        """Get the MQTT client for a printer."""
+    def get_client(self, printer_id: int):
+        """Get the live driver for a printer.
+
+        Historically this always returned a ``BambuMQTTClient`` and most call
+        sites still assume its method names. That assumption is fine — every
+        driver answers to the same names for operations it supports — but a
+        caller that may run against a non-Bambu printer should go through
+        :meth:`command` so an async driver is awaited and an unsupported
+        operation raises :class:`UnsupportedOperation` instead of 500-ing.
+        """
         return self._clients.get(printer_id)
+
+    def get_printer_type(self, printer_id: int) -> str:
+        """Which protocol a connected printer speaks (defaults to Bambu)."""
+        return self._types.get(printer_id, PRINTER_TYPE_BAMBU)
+
+    async def command(self, printer_id: int, operation: str, /, *args, **kwargs):
+        """Run a driver operation, awaiting it when the driver is async.
+
+        Raises :class:`UnsupportedOperation` when the printer's protocol has no
+        equivalent — routes turn that into 501 — and returns False when the
+        printer is not connected, matching what the direct call sites did.
+        """
+        client = self._clients.get(printer_id)
+        if client is None:
+            return False
+        return await call_driver(client, operation, *args, **kwargs)
+
+    def supports(self, printer_id: int, operation: str) -> bool:
+        """Whether the connected printer's driver implements ``operation``."""
+        client = self._clients.get(printer_id)
+        return callable(getattr(client, operation, None)) if client is not None else False
 
     def mark_printer_offline(self, printer_id: int):
         """Mark a printer as offline and trigger status callback.
@@ -945,7 +993,7 @@ class PrinterManager:
                 if self._on_status_change:
                     self._schedule_async(self._on_status_change(printer_id, client.state))
 
-    def start_print(
+    async def start_print(
         self,
         printer_id: int,
         filename: str,
@@ -982,7 +1030,11 @@ class PrinterManager:
             caller.name,
         )
         if printer_id in self._clients:
-            return self._clients[printer_id].start_print(
+            # await-tolerant: the MQTT client returns a bool, an HTTP driver a
+            # coroutine. Both arrive here as the same bool.
+            return await call_driver(
+                self._clients[printer_id],
+                "start_print",
                 filename,
                 plate_id,
                 ams_mapping=ams_mapping,
@@ -998,10 +1050,10 @@ class PrinterManager:
             )
         return False
 
-    def stop_print(self, printer_id: int) -> bool:
+    async def stop_print(self, printer_id: int) -> bool:
         """Stop the current print on a connected printer."""
         if printer_id in self._clients:
-            return self._clients[printer_id].stop_print()
+            return await call_driver(self._clients[printer_id], "stop_print")
         return False
 
     async def wait_for_cooldown(

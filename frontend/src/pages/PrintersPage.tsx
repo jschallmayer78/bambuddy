@@ -145,7 +145,7 @@ import {
 import { Link as RouterLink, useNavigate } from 'react-router-dom';
 import { api, discoveryApi, firmwareApi, withStreamToken, ApiError } from '../api/client';
 import { formatDateOnly, formatDateTime, formatETA, formatDuration, formatDurationFromHours, parseUTCDate } from '../utils/date';
-import type { Printer, PrinterCreate, PrinterStatus, AMSUnit, DiscoveredPrinter, FirmwareUpdateInfo, FirmwareUploadStatus, LinkedSpoolInfo, SpoolAssignment, HMSError, InventorySpool, SmartPlug, PrinterDiagnosticResult } from '../api/client';
+import type { Printer, PrinterCreate, PrinterType, PrinterStatus, AMSUnit, DiscoveredPrinter, FirmwareUpdateInfo, FirmwareUploadStatus, LinkedSpoolInfo, SpoolAssignment, HMSError, InventorySpool, SmartPlug, PrinterDiagnosticResult } from '../api/client';
 import { Card, CardContent } from '../components/Card';
 import { Button } from '../components/Button';
 import { ConfirmModal } from '../components/ConfirmModal';
@@ -2164,6 +2164,12 @@ function PrinterCard({
   const navigate = useNavigate();
   const { showToast } = useToast();
   const { hasPermission } = useAuth();
+  // Much of this card is Bambu's protocol surface — AMS management, HMS faults,
+  // K-profiles, the AI detectors, the nozzle rack, the chamber heater and
+  // airduct, MQTT itself. A driver with no equivalent answers those routes with
+  // 501, so the controls are hidden rather than left to fail on click. Rows
+  // written before multi-protocol support carry no type and are Bambu.
+  const isBambu = (printer.printer_type ?? 'bambu') === 'bambu';
   const [showMenu, setShowMenu] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleteArchives, setDeleteArchives] = useState(true);
@@ -2526,8 +2532,16 @@ function PrinterCard({
   // one row, so on a card that shows a value anywhere, the slots without one
   // reserve the same height -- otherwise their fill bars sit a line above their
   // neighbours'. A card with no calibrated slot at all is unaffected.
-  const anySlotHasKValue = amsData.some(unit => unit.tray.some(tray => tray.k))
-    || (status?.vt_tray ?? []).some(tray => tray.k);
+  // A Snapmaker U1's four toolheads arrive in the normal `ams` field as one
+  // synthetic unit, which is what lets the slot graphic work unchanged — but
+  // "AMS-A" would name a part that machine does not have.
+  const amsUnitLabel = (ams: AMSUnit) =>
+    isBambu ? getAmsLabel(ams.id, ams.tray.length) : t('printers.toolheads');
+
+  // K-profiles are a Bambu calibration concept, so a non-Bambu card neither
+  // renders the line nor reserves room for it.
+  const anySlotHasKValue = isBambu && (amsData.some(unit => unit.tray.some(tray => tray.k))
+    || (status?.vt_tray ?? []).some(tray => tray.k));
 
   // Confirm a drying cycle actually started (#2533). Firmware answers
   // ams_filament_drying with result=success even when it then silently declines,
@@ -3767,16 +3781,18 @@ function PrinterCard({
             <RotateCw className={`w-[var(--pc-i4,1rem)] h-[var(--pc-i4,1rem)] ${forceRefreshMutation.isPending ? 'animate-spin' : ''}`} />
             {t('printers.forceRefresh')}
           </button>
-          <button
-            className="w-full px-4 py-2 text-left text-sm hover:bg-bambu-dark-tertiary flex items-center gap-2"
-            onClick={() => {
-              setShowMQTTDebug(true);
-              setShowMenu(false);
-            }}
-          >
-            <Terminal className="w-[var(--pc-i4,1rem)] h-[var(--pc-i4,1rem)]" />
-            {t('printers.mqttDebug')}
-          </button>
+          {isBambu && (
+            <button
+              className="w-full px-4 py-2 text-left text-sm hover:bg-bambu-dark-tertiary flex items-center gap-2"
+              onClick={() => {
+                setShowMQTTDebug(true);
+                setShowMenu(false);
+              }}
+            >
+              <Terminal className="w-[var(--pc-i4,1rem)] h-[var(--pc-i4,1rem)]" />
+              {t('printers.mqttDebug')}
+            </button>
+          )}
           <button
             className="w-full px-4 py-2 text-left text-sm hover:bg-bambu-dark-tertiary flex items-center gap-2"
             onClick={() => {
@@ -4027,7 +4043,7 @@ function PrinterCard({
                 </span>
               )}
               {/* HMS Status Indicator */}
-              {status?.connected && (() => {
+              {status?.connected && isBambu && (() => {
                 const knownErrors = status.hms_errors ? filterKnownHMSErrors(status.hms_errors) : [];
                 return (
                   <button
@@ -4049,7 +4065,7 @@ function PrinterCard({
               {/* AI failure detection badge (#1546) — always shown while detection
                   is enabled for this printer, like the other health badges. Gray
                   "Idle" outside a monitored print, class-colored during one. */}
-              {aiDetectionEnabled && (() => {
+              {aiDetectionEnabled && isBambu && (() => {
                 const cls = aiDetectionClass(aiDetection);
                 const colorClass =
                   cls === 'failure'
@@ -4529,7 +4545,7 @@ function PrinterCard({
               // as `isExhaustModel ? exhaust_fan_present : hasChamberFan` the
               // P2S/X2D entries in MODELS_WITH_CHAMBER_FAN became unreachable,
               // which reads as if removing them were safe.
-              const showChamberFan = hasChamberFan && (!isExhaustModel || status.exhaust_fan_present);
+              const showChamberFan = isBambu && hasChamberFan && (!isExhaustModel || status.exhaust_fan_present);
               const fanItems: {
                 key: string;
                 label: string;
@@ -4707,7 +4723,7 @@ function PrinterCard({
                     {status.temperatures.chamber !== undefined && (() => {
                       // Sensor-only models (X1C, X1E, P2S) show the chamber reading
                       // but can't act on M141, so we keep the card read-only there.
-                      const hasChamberHeater = status.supports_chamber_heater === true;
+                      const hasChamberHeater = isBambu && status.supports_chamber_heater === true;
                       return (
                         <div
                           className={hasChamberHeater
@@ -4794,7 +4810,7 @@ function PrinterCard({
                       </DualNozzleHoverCard>
                     )}
                     {/* H2C nozzle rack (tool-changer dock) — only show when rack nozzles exist (IDs >= 2) */}
-                    {status.nozzle_rack && status.nozzle_rack.some(s => s.id >= 2) && (
+                    {isBambu && status.nozzle_rack && status.nozzle_rack.some(s => s.id >= 2) && (
                       <NozzleRackCard slots={status.nozzle_rack} filamentInfo={filamentInfo} />
                     )}
                   </div>
@@ -4874,7 +4890,7 @@ function PrinterCard({
                       </button>
 
                       {/* Airduct Mode (P2S / X2D / H2*) */}
-                      {(['P2S', 'X2D', 'H2D', 'H2C', 'H2S'].includes(printer.model ?? '')) && (() => {
+                      {isBambu && (['P2S', 'X2D', 'H2D', 'H2C', 'H2S'].includes(printer.model ?? '')) && (() => {
                         const isHeating = status.airduct_mode === 1;
                         const Icon = isHeating ? Flame : Snowflake;
                         const color = isHeating ? 'text-orange-600 dark:text-orange-400' : 'text-sky-600 dark:text-sky-400';
@@ -5294,10 +5310,12 @@ function PrinterCard({
                     <span className="text-[length:var(--pc-t10,10px)] uppercase tracking-wider text-bambu-gray font-medium">
                       {t('printers.filaments')}
                     </span>
-                    <AmsBackupBadge
-                      state={status.ams_filament_backup}
-                      onClick={() => setAmsBackupModalOpen(true)}
-                    />
+                    {isBambu && (
+                      <AmsBackupBadge
+                        state={status.ams_filament_backup}
+                        onClick={() => setAmsBackupModalOpen(true)}
+                      />
+                    )}
                     <div className="flex-1 h-[2px] bg-bambu-dark-tertiary" />
                     {/* Offered only when an AMS is present: on a printer that
                         feeds from the external spool alone, hiding it would
@@ -5334,7 +5352,7 @@ function PrinterCard({
                                   onSaved={refetchAmsLabels}
                                 >
                                   <span className="block truncate text-[length:var(--pc-t10,10px)] text-white font-medium cursor-default select-none">
-                                    {amsLabels?.[ams.id] || getAmsLabel(ams.id, ams.tray.length)}
+                                    {amsLabels?.[ams.id] || amsUnitLabel(ams)}
                                   </span>
                                 </AmsNameHoverCard>
                                 {sideBadge?.kind === 'inlet' ? (
@@ -5382,7 +5400,7 @@ function PrinterCard({
                                   {/* Drying button — only for AMS 2 Pro (n3f) and AMS-HT (n3s).
                                       Screen-only models (P1 series) keep the control but can't
                                       be commanded: it stays disabled and says why (#2533). */}
-                                  {(status.supports_drying || status.drying_screen_only) && (ams.module_type === 'n3f' || ams.module_type === 'n3s') && hasPermission('printers:control') && (
+                                  {isBambu && (status.supports_drying || status.drying_screen_only) && (ams.module_type === 'n3f' || ams.module_type === 'n3s') && hasPermission('printers:control') && (
                                     <button
                                       disabled={status.drying_screen_only || !!(ams.dry_sf_reason?.length && ams.dry_time === 0)}
                                       onClick={(e) => {
@@ -5708,7 +5726,7 @@ function PrinterCard({
                                           };
                                         })()}
                                         configureSlot={{
-                                          enabled: hasPermission('printers:control'),
+                                          enabled: isBambu && hasPermission('printers:control'),
                                           onConfigure: () => setConfigureSlotModal({
                                             amsId: ams.id,
                                             trayId: slotIdx,
@@ -5735,7 +5753,7 @@ function PrinterCard({
                                           isRefreshing,
                                         })}
                                         configureSlot={{
-                                          enabled: hasPermission('printers:control'),
+                                          enabled: isBambu && hasPermission('printers:control'),
                                           onConfigure: () => setConfigureSlotModal({
                                             amsId: ams.id,
                                             trayId: slotIdx,
@@ -5934,7 +5952,7 @@ function PrinterCard({
                                   onSaved={refetchAmsLabels}
                                 >
                                   <span className="block truncate text-[length:var(--pc-t10,10px)] text-white font-medium cursor-default select-none">
-                                    {amsLabels?.[ams.id] || getAmsLabel(ams.id, ams.tray.length)}
+                                    {amsLabels?.[ams.id] || amsUnitLabel(ams)}
                                   </span>
                                 </AmsNameHoverCard>
                                 {sideBadge?.kind === 'inlet' ? (
@@ -5950,7 +5968,7 @@ function PrinterCard({
                                 ) : null}
                               </div>
                               {/* Drying button for HT AMS */}
-                              {(status.supports_drying || status.drying_screen_only) && (ams.module_type === 'n3f' || ams.module_type === 'n3s') && hasPermission('printers:control') && (
+                              {isBambu && (status.supports_drying || status.drying_screen_only) && (ams.module_type === 'n3f' || ams.module_type === 'n3s') && hasPermission('printers:control') && (
                                 <div className="relative ml-auto">
                                   <button
                                     disabled={status.drying_screen_only}
@@ -6114,7 +6132,7 @@ function PrinterCard({
                                       };
                                     })()}
                                     configureSlot={{
-                                      enabled: hasPermission('printers:control'),
+                                      enabled: isBambu && hasPermission('printers:control'),
                                       onConfigure: () => setConfigureSlotModal({
                                         amsId: ams.id,
                                         trayId: htSlotId,
@@ -6141,7 +6159,7 @@ function PrinterCard({
                                       isRefreshing: isHtRefreshing,
                                     })}
                                     configureSlot={{
-                                      enabled: hasPermission('printers:control'),
+                                      enabled: isBambu && hasPermission('printers:control'),
                                       onConfigure: () => setConfigureSlotModal({
                                         amsId: ams.id,
                                         trayId: htSlotId,
@@ -6405,7 +6423,7 @@ function PrinterCard({
                                         };
                                       })()}
                                       configureSlot={{
-                                        enabled: hasPermission('printers:control'),
+                                        enabled: isBambu && hasPermission('printers:control'),
                                         onConfigure: () => setConfigureSlotModal({
                                           amsId: 255,
                                           trayId: slotTrayId,
@@ -6432,7 +6450,7 @@ function PrinterCard({
                                         includeRfid: false,
                                       })}
                                       configureSlot={{
-                                        enabled: hasPermission('printers:control'),
+                                        enabled: isBambu && hasPermission('printers:control'),
                                         onConfigure: () => setConfigureSlotModal({
                                           amsId: 255,
                                           trayId: slotTrayId,
@@ -6674,11 +6692,13 @@ function PrinterCard({
         {/* Scheduled Drying Banner -- inside CardContent so it picks up the
             card's horizontal padding instead of running full-bleed into the
             rounded bottom edge. */}
-        <ScheduledDryingBanner
-          printerId={printer.id}
-          dryingActive={amsData.some(a => (a.dry_time ?? 0) > 0)}
-          timeFormat={timeFormat}
-        />
+        {isBambu && (
+          <ScheduledDryingBanner
+            printerId={printer.id}
+            dryingActive={amsData.some(a => (a.dry_time ?? 0) > 0)}
+            timeFormat={timeFormat}
+          />
+        )}
       </CardContent>
 
       {/* File Manager Modal */}
@@ -6731,7 +6751,7 @@ function PrinterCard({
       )}
 
       {/* MQTT Debug Modal */}
-      {showMQTTDebug && (
+      {showMQTTDebug && isBambu && (
         <MQTTDebugModal
           printerId={printer.id}
           printerName={printer.name}
@@ -7152,7 +7172,7 @@ function PrinterCard({
       />
 
       {/* HMS Error Modal */}
-      {showHMSModal && (
+      {showHMSModal && isBambu && (
         <HMSErrorModal
           printerName={printer.name}
           errors={status?.hms_errors || []}
@@ -7164,7 +7184,7 @@ function PrinterCard({
       )}
 
       {/* AI failure detection modal (#1546) */}
-      {showAiModal && (
+      {showAiModal && isBambu && (
         <AiDetectionModal
           printerName={printer.name}
           detection={aiDetection}
@@ -7174,7 +7194,7 @@ function PrinterCard({
       )}
 
       {/* AMS Filament Backup status / control modal (#1762) */}
-      {amsBackupModalOpen && status && (
+      {amsBackupModalOpen && status && isBambu && (
         <AmsBackupModal
           isOpen={amsBackupModalOpen}
           state={status.ams_filament_backup}
@@ -7593,12 +7613,23 @@ export function AddPrinterModal({
   const [form, setForm] = useState<PrinterCreate>({
     name: '',
     serial_number: '',
+    printer_type: 'bambu',
     ip_address: '',
     access_code: '',
     model: '',
     location: '',
     auto_archive: true,
   });
+  const isU1 = form.printer_type === 'snapmaker_u1';
+
+  // A U1 has no serial to read off the machine, but the backend still needs a
+  // unique non-empty one for every printer. Derive it from the address rather
+  // than demanding a number the user cannot know.
+  const withDerivedSerial = (data: PrinterCreate): PrinterCreate => {
+    const typed = data.serial_number.trim();
+    if (typed) return { ...data, serial_number: typed };
+    return { ...data, serial_number: `u1-${data.ip_address.trim().replace(/[.:]/g, '-')}` };
+  };
 
   // Discovery state
   const [discovering, setDiscovering] = useState(false);
@@ -7623,6 +7654,9 @@ export function AddPrinterModal({
   // failed result awaiting an explicit "save anyway".
   const [checkingSave, setCheckingSave] = useState(false);
   const [saveWarning, setSaveWarning] = useState<PrinterDiagnosticResult | null>(null);
+  // The U1's equivalent: its pre-flight is a plain reachability probe, so what
+  // comes back is one reason string rather than a checklist.
+  const [saveWarningReason, setSaveWarningReason] = useState<string | null>(null);
 
   // Fetch discovery info on mount + restore the last custom CIDR the user
   // typed (kept in localStorage so they don't retype `10.1.1.0/24` every
@@ -7650,23 +7684,39 @@ export function AddPrinterModal({
 
   const handleAddSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    const payload = isU1 ? withDerivedSerial(form) : form;
     setCheckingSave(true);
     try {
-      const result = await api.diagnoseConnection({
-        ip_address: form.ip_address.trim(),
-        serial_number: form.serial_number.trim() || undefined,
-        access_code: form.access_code || undefined,
-      });
-      if (result.checks.some((c) => c.status === 'fail')) {
-        setSaveWarning(result);
-        return;
+      if (isU1) {
+        // Every check the diagnostic runs probes a Bambu port, so on a U1 it
+        // would warn about ports the machine never opens. Ask that printer's
+        // own driver whether it can connect instead.
+        const probe = await api.testConnection({
+          ip_address: payload.ip_address.trim(),
+          printer_type: payload.printer_type,
+          access_code: payload.access_code || undefined,
+        });
+        if (!probe.success) {
+          setSaveWarningReason(probe.reason || t('printers.addPreflight.unreachable'));
+          return;
+        }
+      } else {
+        const result = await api.diagnoseConnection({
+          ip_address: payload.ip_address.trim(),
+          serial_number: payload.serial_number.trim() || undefined,
+          access_code: payload.access_code || undefined,
+        });
+        if (result.checks.some((c) => c.status === 'fail')) {
+          setSaveWarning(result);
+          return;
+        }
       }
     } catch {
       // Diagnostic infrastructure failed — never block the save on it.
     } finally {
       setCheckingSave(false);
     }
-    onAdd(form);
+    onAdd(payload);
   };
 
   const startDiscovery = async () => {
@@ -7758,12 +7808,17 @@ export function AddPrinterModal({
   const selectPrinter = (printer: DiscoveredPrinter) => {
     // Don't pre-fill serial if it's a placeholder (unknown-*) - user needs to enter actual serial
     const serialNumber = printer.serial.startsWith('unknown-') ? '' : printer.serial;
+    // Discovery already knows what it found, so the form follows it instead of
+    // making the user re-pick the type they just clicked. mapModelCode only
+    // speaks Bambu's SSDP codes — a U1 reports its model directly.
+    const printerType: PrinterType = printer.printer_type ?? 'bambu';
     setForm({
       ...form,
       name: printer.name || '',
       serial_number: serialNumber,
+      printer_type: printerType,
       ip_address: printer.ip_address,
-      model: mapModelCode(printer.model),
+      model: printerType === 'snapmaker_u1' ? (printer.model || 'U1') : mapModelCode(printer.model),
     });
     // Clear discovery results after selection
     setDiscovered([]);
@@ -7925,6 +7980,29 @@ export function AddPrinterModal({
           </div>
           <form onSubmit={handleAddSubmit} className="space-y-4">
             <div>
+              <label className="block text-sm text-bambu-gray mb-1" htmlFor="printer_type">
+                {t('printers.printerType.label')}
+              </label>
+              <select
+                id="printer_type"
+                className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
+                value={form.printer_type ?? 'bambu'}
+                onChange={(e) => {
+                  const nextType = e.target.value as PrinterType;
+                  setForm({
+                    ...form,
+                    printer_type: nextType,
+                    // The model lists don't overlap, so a model carried over
+                    // from the other type would be a model this printer isn't.
+                    model: nextType === 'snapmaker_u1' ? 'U1' : '',
+                  });
+                }}
+              >
+                <option value="bambu">{t('printers.printerType.bambu')}</option>
+                <option value="snapmaker_u1">{t('printers.printerType.snapmakerU1')}</option>
+              </select>
+            </div>
+            <div>
               <label className="block text-sm text-bambu-gray mb-1">{t('printers.name')}</label>
               <input
                 type="text"
@@ -7940,7 +8018,7 @@ export function AddPrinterModal({
               <input
                 type="text"
                 required
-                pattern="(\d{1,3}(\.\d{1,3}){3}|[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*)"
+                pattern="(\d{1,3}(\.\d{1,3}){3}|[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*)(:\d{1,5})?"
                 className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
                 value={form.ip_address}
                 onChange={(e) => setForm({ ...form, ip_address: e.target.value })}
@@ -7948,25 +8026,32 @@ export function AddPrinterModal({
               />
             </div>
             <div>
-              <label className="block text-sm text-bambu-gray mb-1">{t('printers.serialNumber')}</label>
+              <label className="block text-sm text-bambu-gray mb-1">
+                {isU1 ? t('printers.modal.serialLabelOptional') : t('printers.serialNumber')}
+              </label>
               <input
                 type="text"
-                required
+                required={!isU1}
                 className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
                 value={form.serial_number}
                 onChange={(e) => setForm({ ...form, serial_number: e.target.value })}
-                placeholder="01P00A000000000"
+                placeholder={isU1 ? t('printers.modal.serialU1Placeholder') : '01P00A000000000'}
               />
+              {isU1 && (
+                <p className="text-xs text-bambu-gray mt-1">{t('printers.modal.serialU1Help')}</p>
+              )}
             </div>
             <div>
-              <label className="block text-sm text-bambu-gray mb-1">{t('printers.accessCode')}</label>
+              <label className="block text-sm text-bambu-gray mb-1">
+                {isU1 ? t('printers.modal.moonrakerToken') : t('printers.accessCode')}
+              </label>
               <input
                 type="password"
-                required
+                required={!isU1}
                 className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
                 value={form.access_code}
                 onChange={(e) => setForm({ ...form, access_code: e.target.value })}
-                placeholder={t('printers.modal.fromPrinterSettings')}
+                placeholder={isU1 ? t('printers.modal.moonrakerTokenPlaceholder') : t('printers.modal.fromPrinterSettings')}
               />
             </div>
             <div>
@@ -7977,32 +8062,38 @@ export function AddPrinterModal({
                 onChange={(e) => setForm({ ...form, model: e.target.value })}
               >
                 <option value="">{t('printers.modal.selectModel')}</option>
-                <optgroup label="A1 Series">
-                  <option value="A1">A1</option>
-                  <option value="A1 Mini">A1 Mini</option>
-                </optgroup>
-                <optgroup label="A2 Series">
-                  <option value="A2L">A2L</option>
-                </optgroup>
-                <optgroup label="H2 Series">
-                  <option value="H2C">H2C</option>
-                  <option value="H2D">H2D</option>
-                  <option value="H2D Pro">H2D Pro</option>
-                  <option value="H2S">H2S</option>
-                </optgroup>
-                <optgroup label="P Series">
-                  <option value="P1P">P1P</option>
-                  <option value="P1S">P1S</option>
-                  <option value="P2S">P2S</option>
-                </optgroup>
-                <optgroup label="X1 Series">
-                  <option value="X1">X1</option>
-                  <option value="X1C">X1 Carbon</option>
-                  <option value="X1E">X1E</option>
-                </optgroup>
-                <optgroup label="X2 Series">
-                  <option value="X2D">X2D</option>
-                </optgroup>
+                {isU1 ? (
+                  <option value="U1">U1</option>
+                ) : (
+                  <>
+                    <optgroup label="A1 Series">
+                      <option value="A1">A1</option>
+                      <option value="A1 Mini">A1 Mini</option>
+                    </optgroup>
+                    <optgroup label="A2 Series">
+                      <option value="A2L">A2L</option>
+                    </optgroup>
+                    <optgroup label="H2 Series">
+                      <option value="H2C">H2C</option>
+                      <option value="H2D">H2D</option>
+                      <option value="H2D Pro">H2D Pro</option>
+                      <option value="H2S">H2S</option>
+                    </optgroup>
+                    <optgroup label="P Series">
+                      <option value="P1P">P1P</option>
+                      <option value="P1S">P1S</option>
+                      <option value="P2S">P2S</option>
+                    </optgroup>
+                    <optgroup label="X1 Series">
+                      <option value="X1">X1</option>
+                      <option value="X1C">X1 Carbon</option>
+                      <option value="X1E">X1E</option>
+                    </optgroup>
+                    <optgroup label="X2 Series">
+                      <option value="X2D">X2D</option>
+                    </optgroup>
+                  </>
+                )}
               </select>
             </div>
             <div>
@@ -8028,32 +8119,44 @@ export function AddPrinterModal({
                 {t('printers.modal.autoArchiveLabel')}
               </label>
             </div>
-            <button
-              type="button"
-              onClick={() => setShowDiagnostic(true)}
-              disabled={!form.ip_address.trim()}
-              className="w-full flex items-center justify-center gap-2 px-3 py-2 text-sm text-bambu-gray hover:text-white disabled:opacity-40 disabled:cursor-not-allowed border border-bambu-dark-tertiary rounded-lg transition-colors"
-            >
-              <Stethoscope className="w-4 h-4" />
-              {t('diagnostic.runButton')}
-            </button>
-            {saveWarning ? (
+            {/* Bambu-only: every check it runs probes a Bambu port. */}
+            {!isU1 && (
+              <button
+                type="button"
+                onClick={() => setShowDiagnostic(true)}
+                disabled={!form.ip_address.trim()}
+                className="w-full flex items-center justify-center gap-2 px-3 py-2 text-sm text-bambu-gray hover:text-white disabled:opacity-40 disabled:cursor-not-allowed border border-bambu-dark-tertiary rounded-lg transition-colors"
+              >
+                <Stethoscope className="w-4 h-4" />
+                {t('diagnostic.runButton')}
+              </button>
+            )}
+            {saveWarning || saveWarningReason ? (
               <div className="rounded-lg bg-amber-50 dark:bg-amber-500/10 border border-amber-300 dark:border-amber-500/30 p-3 space-y-3">
                 <div className="flex items-start gap-2">
                   <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0 text-amber-600 dark:text-amber-400" />
-                  <p className="text-sm text-amber-700 dark:text-amber-300">{t('printers.addPreflight.warning')}</p>
+                  <p className="text-sm text-amber-700 dark:text-amber-300">
+                    {saveWarning ? t('printers.addPreflight.warning') : saveWarningReason}
+                  </p>
                 </div>
-                <DiagnosticChecklist result={saveWarning} />
+                {saveWarning && <DiagnosticChecklist result={saveWarning} />}
                 <div className="flex gap-3">
                   <Button
                     type="button"
                     variant="secondary"
-                    onClick={() => setSaveWarning(null)}
+                    onClick={() => {
+                      setSaveWarning(null);
+                      setSaveWarningReason(null);
+                    }}
                     className="flex-1"
                   >
                     {t('printers.addPreflight.back')}
                   </Button>
-                  <Button type="button" onClick={() => onAdd(form)} className="flex-1">
+                  <Button
+                    type="button"
+                    onClick={() => onAdd(isU1 ? withDerivedSerial(form) : form)}
+                    className="flex-1"
+                  >
                     {t('printers.addPreflight.saveAnyway')}
                   </Button>
                 </div>
@@ -8072,7 +8175,7 @@ export function AddPrinterModal({
         </CardContent>
       </Card>
     </div>
-    {showDiagnostic && (
+    {showDiagnostic && !isU1 && (
       <ConnectionDiagnosticModal
         connection={{
           ip_address: form.ip_address.trim(),
@@ -8386,6 +8489,7 @@ function EditPrinterModal({
     auto_archive: printer.auto_archive,
     is_active: printer.is_active,
   });
+  const isU1 = printer.printer_type === 'snapmaker_u1';
 
   // Setup-time pre-flight — same warn-on-save as the Add-Printer dialog, so an
   // edit that breaks connectivity (e.g. a mistyped IP) is caught before save.
@@ -8429,6 +8533,12 @@ function EditPrinterModal({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    // The diagnostic only knows Bambu's ports, so on a U1 it would warn about
+    // ports the machine never opens — every save would need "save anyway".
+    if (isU1) {
+      doSave();
+      return;
+    }
     setCheckingSave(true);
     try {
       const result = await api.diagnoseConnection({
@@ -8473,7 +8583,7 @@ function EditPrinterModal({
               <input
                 type="text"
                 required
-                pattern="(\d{1,3}(\.\d{1,3}){3}|[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*)"
+                pattern="(\d{1,3}(\.\d{1,3}){3}|[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*)(:\d{1,5})?"
                 className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
                 value={form.ip_address}
                 onChange={(e) => setForm({ ...form, ip_address: e.target.value })}
@@ -8491,13 +8601,15 @@ function EditPrinterModal({
               <p className="text-xs text-bambu-gray mt-1">{t('printers.serialCannotBeChanged')}</p>
             </div>
             <div>
-              <label className="block text-sm text-bambu-gray mb-1">{t('printers.accessCode')}</label>
+              <label className="block text-sm text-bambu-gray mb-1">
+                {isU1 ? t('printers.modal.moonrakerToken') : t('printers.accessCode')}
+              </label>
               <input
                 type="password"
                 className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
                 value={form.access_code}
                 onChange={(e) => setForm({ ...form, access_code: e.target.value })}
-                placeholder={t('printers.accessCodePlaceholder')}
+                placeholder={isU1 ? t('printers.modal.moonrakerTokenPlaceholder') : t('printers.accessCodePlaceholder')}
               />
             </div>
             <div>
@@ -8508,32 +8620,38 @@ function EditPrinterModal({
                 onChange={(e) => setForm({ ...form, model: e.target.value })}
               >
                 <option value="">{t('printers.modal.selectModel')}</option>
-                <optgroup label="A1 Series">
-                  <option value="A1">A1</option>
-                  <option value="A1 Mini">A1 Mini</option>
-                </optgroup>
-                <optgroup label="A2 Series">
-                  <option value="A2L">A2L</option>
-                </optgroup>
-                <optgroup label="H2 Series">
-                  <option value="H2C">H2C</option>
-                  <option value="H2D">H2D</option>
-                  <option value="H2D Pro">H2D Pro</option>
-                  <option value="H2S">H2S</option>
-                </optgroup>
-                <optgroup label="P Series">
-                  <option value="P1P">P1P</option>
-                  <option value="P1S">P1S</option>
-                  <option value="P2S">P2S</option>
-                </optgroup>
-                <optgroup label="X1 Series">
-                  <option value="X1">X1</option>
-                  <option value="X1C">X1 Carbon</option>
-                  <option value="X1E">X1E</option>
-                </optgroup>
-                <optgroup label="X2 Series">
-                  <option value="X2D">X2D</option>
-                </optgroup>
+                {isU1 ? (
+                  <option value="U1">U1</option>
+                ) : (
+                  <>
+                    <optgroup label="A1 Series">
+                      <option value="A1">A1</option>
+                      <option value="A1 Mini">A1 Mini</option>
+                    </optgroup>
+                    <optgroup label="A2 Series">
+                      <option value="A2L">A2L</option>
+                    </optgroup>
+                    <optgroup label="H2 Series">
+                      <option value="H2C">H2C</option>
+                      <option value="H2D">H2D</option>
+                      <option value="H2D Pro">H2D Pro</option>
+                      <option value="H2S">H2S</option>
+                    </optgroup>
+                    <optgroup label="P Series">
+                      <option value="P1P">P1P</option>
+                      <option value="P1S">P1S</option>
+                      <option value="P2S">P2S</option>
+                    </optgroup>
+                    <optgroup label="X1 Series">
+                      <option value="X1">X1</option>
+                      <option value="X1C">X1 Carbon</option>
+                      <option value="X1E">X1E</option>
+                    </optgroup>
+                    <optgroup label="X2 Series">
+                      <option value="X2D">X2D</option>
+                    </optgroup>
+                  </>
+                )}
               </select>
             </div>
             <div>

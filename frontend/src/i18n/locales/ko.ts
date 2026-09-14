@@ -217,6 +217,12 @@ export default {
   printers: {
     title: '프린터',
     addPrinter: '프린터 추가',
+    printerType: {
+      label: '프린터 종류',
+      bambu: 'Bambu Lab',
+      snapmakerU1: 'Snapmaker U1',
+    },
+    toolheads: '툴헤드',
     editPrinter: '프린터 편집',
     deletePrinter: '프린터 삭제',
     printerName: '프린터 이름',
@@ -529,6 +535,11 @@ export default {
       locationPlaceholder: '예: 작업실, 사무실, 지하실',
       autoArchiveLabel: '완료된 인쇄 자동 아카이브',
       fromPrinterSettings: '프린터 설정에서',
+      serialLabelOptional: '시리얼 번호 (선택)',
+      serialU1Placeholder: '비워 두면 IP 주소에서 생성됩니다',
+      serialU1Help: '이 프린터를 구분하는 라벨일 뿐입니다. U1에는 시리얼 번호가 없습니다.',
+      moonrakerToken: 'Moonraker API 토큰 (선택)',
+      moonrakerTokenPlaceholder: 'Moonraker가 요구하는 경우에만',
       modelOptional: '모델 (선택사항)',
       saveChanges: '변경사항 저장'
     },
@@ -833,7 +844,8 @@ export default {
       checking: '연결 확인 중...',
       warning: '일부 연결 확인이 실패했습니다. 이 프린터가 오프라인으로 표시될 수 있습니다. 아래 항목을 검토하고 수정하거나 그냥 저장하세요.',
       back: '뒤로',
-      saveAnyway: '그냥 저장'
+      saveAnyway: '그냥 저장',
+      unreachable: '해당 주소에서 프린터가 응답하지 않았습니다.',
     }
   },
   archives: {
@@ -7110,7 +7122,26 @@ export default {
         pass: '프린터가 상태 업데이트를 게시하고 있습니다 — AMS, 필라멘트, K-프로파일이 슬라이서에 올바르게 반영됩니다.',
         fail: 'MQTT 브로커는 연결을 수락했지만 프린터가 상태 보고를 게시하지 않았습니다. 거의 항상 시리얼 번호가 잘못되었거나 대소문자가 일치하지 않아서 발생합니다 — device/<serial>/report 토픽은 대소문자를 구분합니다. 프린터 설정의 시리얼 번호를 프린터 화면 표시와 비교해 확인하세요.',
         skip: '확인할 수 없음 — 프린터에 연결되어 있어야 합니다.'
-      }
+      },
+      moonraker: {
+        title: '프린터 API(Moonraker)',
+        pass: '프린터가 응답했습니다. Bambuddy가 상태를 읽고 명령을 보낼 수 있습니다.',
+        fail: '이 주소의 프린터가 응답하지 않습니다({{error}}). 전원이 켜져 있는지, 같은 네트워크에 있는지, 여기에 설정한 주소로 연결되는지 확인하세요.',
+      },
+      snapmaker_identity: {
+        title: 'Snapmaker 펌웨어',
+        pass: 'Snapmaker {{machine_type}}(으)로 확인되었습니다.',
+        pass_unknown: 'Snapmaker 펌웨어로 확인되었습니다.',
+        warn: '프린터가 응답했지만 Snapmaker로 식별되지 않습니다. 보통 커뮤니티 펌웨어를 쓰는 경우입니다. 상태 표시와 기본 제어는 동작하지만 일부 U1 전용 기능은 동작하지 않을 수 있습니다.',
+        skip: '확인하지 않음 — 프린터에 연결할 수 없었습니다.',
+      },
+      klipper_ready: {
+        title: '펌웨어 준비 완료(Klipper)',
+        pass: '펌웨어가 준비되어 명령을 받고 있습니다.',
+        fail: '펌웨어가 준비 완료가 아니라 “{{state}}” 상태를 보고합니다. 정지된 상태이며 다시 시작할 때까지 모든 명령을 거부합니다. 프린터 화면에서 FIRMWARE_RESTART를 실행하거나 전원을 껐다 켜세요.',
+        fail_error: '펌웨어 상태를 읽지 못했습니다({{error}}). 프린터는 응답했지만 펌웨어는 응답하지 않았습니다. 다시 시작한 뒤 검사를 다시 실행하세요.',
+        skip: '확인하지 않음 — 프린터에 연결할 수 없었습니다.',
+      },
     }
   },
   systemHealth: {

@@ -48,7 +48,7 @@ from backend.app.schemas.printer import (
     PrinterUpdate,
     PrintOptionsResponse,
 )
-from backend.app.services import drying_preflight
+from backend.app.services import drying_preflight, printer_files
 from backend.app.services.bambu_ftp import (
     cache_3mf_download,
     delete_file_async,
@@ -61,6 +61,8 @@ from backend.app.services.bambu_ftp import (
 )
 from backend.app.services.print_storage import ftp_probe_paths, print_file_reachable_over_ftp
 from backend.app.services.printer_diagnostic import run_connection_diagnostic
+from backend.app.services.printer_drivers.base import PRINTER_TYPE_BAMBU, call_driver
+from backend.app.services.printer_drivers.factory import probe_printer
 from backend.app.services.printer_manager import (
     display_temperatures,
     drying_screen_only,
@@ -169,23 +171,36 @@ async def create_printer(
     if result.scalar_one_or_none():
         raise HTTPException(400, "Printer with this serial number already exists")
 
-    test_result = await printer_manager.test_connection(
-        ip_address=printer_data.ip_address,
-        serial_number=printer_data.serial_number,
-        access_code=printer_data.access_code,
+    # Which handshake has to succeed depends on the protocol: Bambu needs the
+    # MQTT session (and therefore a correct serial + access code), while a
+    # Snapmaker U1 only has to answer Moonraker and identify itself.
+    test_result = await probe_printer(
+        printer_data.printer_type,
+        printer_data.ip_address,
+        printer_data.serial_number,
+        printer_data.access_code,
     )
     if not test_result.get("success"):
         # The frontend renders the user-facing message via i18n on `code`;
         # `message` is an English fallback for non-UI clients (curl / scripts).
+        # The driver's own `reason` rides along so a U1 failure does not read
+        # as advice about LAN-only mode and access codes it does not have.
+        if printer_data.printer_type == PRINTER_TYPE_BAMBU:
+            fallback = (
+                "Could not connect to the printer. Verify IP address, serial number, "
+                "and access code, and confirm LAN-only mode is enabled. "
+                "The printer was not added."
+            )
+        else:
+            fallback = (
+                "Could not reach the printer. Verify its IP address and that it is powered on "
+                "and on the same network. The printer was not added."
+            )
         raise HTTPException(
             status_code=400,
             detail={
                 "code": "printer_connection_failed",
-                "message": (
-                    "Could not connect to the printer. Verify IP address, serial number, "
-                    "and access code, and confirm LAN-only mode is enabled. "
-                    "The printer was not added."
-                ),
+                "message": test_result.get("reason") or fallback,
             },
         )
 
@@ -1023,17 +1038,18 @@ async def disconnect_printer(
 @router.post("/test")
 async def test_printer_connection(
     ip_address: str,
-    serial_number: str,
-    access_code: str,
+    serial_number: str = "",
+    access_code: str = "",
+    printer_type: str = PRINTER_TYPE_BAMBU,
     _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_CREATE),
 ):
-    """Test connection to a printer without saving."""
-    result = await printer_manager.test_connection(
-        ip_address=ip_address,
-        serial_number=serial_number,
-        access_code=access_code,
-    )
-    return result
+    """Test connection to a printer without saving.
+
+    ``serial_number`` and ``access_code`` default to empty because a Snapmaker
+    U1 has neither — it is identified by what its Moonraker reports. Both stay
+    required in practice for Bambu, whose probe fails without them.
+    """
+    return await probe_printer(printer_type, ip_address, serial_number, access_code)
 
 
 @router.post("/diagnostic", response_model=PrinterDiagnosticResult)
@@ -1621,6 +1637,16 @@ async def list_printer_files(
     """List files on the printer at the specified path."""
     printer = await _load_printer_or_404(printer_id)
 
+    if printer_files.is_snapmaker(printer):
+        # Moonraker's file API, not FTPS. It either answers or raises — there
+        # is no partial "unavailable" listing to warn about.
+        try:
+            files = await printer_files.list_files(printer, path)
+        except Exception as exc:
+            logger.warning("Listing files on Snapmaker printer %s failed: %s", printer_id, exc)
+            return {"path": path, "files": [], "warnings": ["printer_unavailable"]}
+        return {"path": path, "files": files, "warnings": []}
+
     listing = await list_files_result_async(
         printer.ip_address,
         printer.access_code,
@@ -2135,6 +2161,13 @@ async def delete_printer_file(
     """Delete a file from the printer."""
     printer = await _load_printer_or_404(printer_id)
 
+    if printer_files.is_snapmaker(printer):
+        try:
+            await printer_files.delete_file(printer, path)
+        except Exception as exc:
+            raise HTTPException(500, f"Failed to delete file: {exc}") from exc
+        return {"status": "deleted", "path": path}
+
     from backend.app.services.bambu_ftp import DeleteResult
 
     result = await delete_file_async(printer.ip_address, printer.access_code, path, printer_model=printer.model)
@@ -2153,6 +2186,13 @@ async def get_printer_storage(
 ):
     """Get storage information from the printer."""
     printer = await _load_printer_or_404(printer_id)
+
+    if printer_files.is_snapmaker(printer):
+        try:
+            return await printer_files.storage_info(printer)
+        except Exception as exc:
+            logger.warning("Storage info for Snapmaker printer %s failed: %s", printer_id, exc)
+            return {"used_bytes": None, "free_bytes": None}
 
     storage_info = await get_storage_info_async(printer.ip_address, printer.access_code, printer_model=printer.model)
 
@@ -3444,7 +3484,7 @@ async def stop_print(
     if not client:
         raise HTTPException(400, "Printer not connected")
 
-    success = client.stop_print()
+    success = await call_driver(client, "stop_print")
     if not success:
         raise HTTPException(500, "Failed to stop print")
 
@@ -3518,7 +3558,7 @@ async def pause_print(
     if not client:
         raise HTTPException(400, "Printer not connected")
 
-    success = client.pause_print()
+    success = await call_driver(client, "pause_print")
     if not success:
         raise HTTPException(500, "Failed to pause print")
 
@@ -3541,7 +3581,7 @@ async def resume_print(
     if not client:
         raise HTTPException(400, "Printer not connected")
 
-    success = client.resume_print()
+    success = await call_driver(client, "resume_print")
     if not success:
         raise HTTPException(500, "Failed to resume print")
 
@@ -3565,7 +3605,7 @@ async def set_print_speed(
     if not client:
         raise HTTPException(400, "Printer not connected")
 
-    success = client.set_print_speed(mode)
+    success = await call_driver(client, "set_print_speed", mode)
     if not success:
         raise HTTPException(500, "Failed to set print speed")
 
@@ -3591,7 +3631,7 @@ async def set_nozzle_temperature(
     if not client:
         raise HTTPException(400, "Printer not connected")
 
-    success = client.set_nozzle_temperature(target, nozzle)
+    success = await call_driver(client, "set_nozzle_temperature", target, nozzle)
     if not success:
         raise HTTPException(500, "Failed to set nozzle temperature")
 
@@ -3615,7 +3655,7 @@ async def set_bed_temperature(
     if not client:
         raise HTTPException(400, "Printer not connected")
 
-    success = client.set_bed_temperature(target)
+    success = await call_driver(client, "set_bed_temperature", target)
     if not success:
         raise HTTPException(500, "Failed to set bed temperature")
 
@@ -3653,7 +3693,7 @@ async def set_chamber_temperature(
     if not client:
         raise HTTPException(400, "Printer not connected")
 
-    success = client.set_chamber_temperature(target)
+    success = await call_driver(client, "set_chamber_temperature", target)
     if not success:
         raise HTTPException(500, "Failed to set chamber temperature")
 
@@ -3707,7 +3747,7 @@ async def set_fan_speed(
         )
 
     pwm_speed = round(speed * 255 / 100)
-    success = client.set_fan_speed(fan_id, pwm_speed)
+    success = await call_driver(client, "set_fan_speed", fan_id, pwm_speed)
     if not success:
         raise HTTPException(500, "Failed to set fan speed")
 
@@ -3740,7 +3780,7 @@ async def select_extruder(
     if not client:
         raise HTTPException(400, "Printer not connected")
 
-    success = client.select_extruder(extruder)
+    success = await call_driver(client, "select_extruder", extruder)
     if not success:
         raise HTTPException(500, "Failed to select nozzle")
 
@@ -3767,7 +3807,7 @@ async def set_airduct_mode(
     if not client:
         raise HTTPException(400, "Printer not connected")
 
-    success = client.set_airduct_mode(mode)
+    success = await call_driver(client, "set_airduct_mode", mode)
     if not success:
         raise HTTPException(500, "Failed to set airduct mode")
 
@@ -3791,7 +3831,7 @@ async def set_chamber_light(
     if not client:
         raise HTTPException(400, "Printer not connected")
 
-    success = client.set_chamber_light(on)
+    success = await call_driver(client, "set_chamber_light", on)
     if not success:
         raise HTTPException(500, "Failed to control chamber light")
 
@@ -3864,7 +3904,7 @@ async def bed_jog(
     # move at the travel limit.
     lines = ["G91", f"G1 Z{gcode_distance:.2f} F600", "G90"]
 
-    if not client.send_gcode("\n".join(lines)):
+    if not await call_driver(client, "send_gcode", "\n".join(lines)):
         raise HTTPException(500, "Failed to send bed-jog command")
 
     return {"success": True, "message": f"Bed jog {distance:+.1f} mm sent"}
@@ -3900,7 +3940,7 @@ async def xy_jog(
     # Bare relative move — never touch M211 (#2579). The firmware keeps its soft
     # endstops on by default and clamps the move at the travel limit; a printer
     # left disabled by an older build is recovered with a power cycle.
-    if not client.send_gcode("\n".join(["G91", f"G1 {' '.join(axes)} F6000", "G90"])):
+    if not await call_driver(client, "send_gcode", "\n".join(["G91", f"G1 {' '.join(axes)} F6000", "G90"])):
         raise HTTPException(500, "Failed to send XY jog command")
 
     return {"success": True, "message": f"XY jog X{x:+.1f} Y{y:+.1f} mm sent"}
@@ -3933,7 +3973,7 @@ async def extruder_jog(
     if not client:
         raise HTTPException(400, "Printer not connected")
 
-    if not client.send_gcode("\n".join(["M83", f"G1 E{distance:.2f} F300", "M82"])):
+    if not await call_driver(client, "send_gcode", "\n".join(["M83", f"G1 E{distance:.2f} F300", "M82"])):
         raise HTTPException(500, "Failed to send extruder jog command")
 
     return {"success": True, "message": f"Extruder jog {distance:+.1f} mm sent"}
@@ -3977,7 +4017,7 @@ async def home_axes(
     if not client:
         raise HTTPException(400, "Printer not connected")
 
-    if not client.send_gcode("G28"):
+    if not await call_driver(client, "send_gcode", "G28"):
         raise HTTPException(500, "Failed to send home command")
 
     return {"success": True, "message": "Full auto-home sequence sent"}
@@ -3999,7 +4039,7 @@ async def clear_hms_errors(
     if not client:
         raise HTTPException(400, "Printer not connected")
 
-    success = client.clear_hms_errors()
+    success = await call_driver(client, "clear_hms_errors")
     if not success:
         raise HTTPException(500, "Failed to clear HMS errors")
 
@@ -4194,7 +4234,7 @@ async def skip_objects(
     if invalid_ids:
         raise HTTPException(400, f"Invalid object IDs: {invalid_ids}")
 
-    success = client.skip_objects(object_ids)
+    success = await call_driver(client, "skip_objects", object_ids)
     if not success:
         raise HTTPException(500, "Failed to skip objects")
 

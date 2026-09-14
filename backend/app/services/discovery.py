@@ -20,6 +20,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from backend.app.services.printer_drivers.base import PRINTER_TYPE_BAMBU, PRINTER_TYPE_SNAPMAKER_U1
+
 logger = logging.getLogger(__name__)
 
 
@@ -66,13 +68,17 @@ SSDP_MSEARCH = (
 
 @dataclass
 class DiscoveredPrinter:
-    """Represents a discovered Bambu Lab printer."""
+    """Represents a printer found on the network."""
 
     serial: str
     name: str
     ip_address: str
     model: str | None = None
     discovered_at: str | None = None
+    # Which protocol the find speaks, so the add-printer dialog can preselect
+    # the right form (a Snapmaker needs no serial or access code) instead of
+    # offering Bambu's fields for a machine that has neither.
+    printer_type: str = PRINTER_TYPE_BAMBU
 
     def to_dict(self) -> dict:
         return {
@@ -80,6 +86,7 @@ class DiscoveredPrinter:
             "name": self.name,
             "ip_address": self.ip_address,
             "model": self.model,
+            "printer_type": self.printer_type,
             "discovered_at": self.discovered_at,
         }
 
@@ -316,6 +323,7 @@ class SubnetScanner:
 
     # Bambu printer ports
     MQTT_PORT = 8883
+    MOONRAKER_PORT = 80
     FTP_PORT = 990
 
     def __init__(self):
@@ -387,10 +395,15 @@ class SubnetScanner:
             self._running = False
 
     async def _probe_host(self, ip: str, timeout: float):
-        """Probe a single host for Bambu printer ports."""
+        """Probe a single host for a printer Bambuddy can talk to."""
         # Check FTP port (990) - more reliable indicator
         ftp_open = await self._check_port(ip, self.FTP_PORT, timeout)
         if not ftp_open:
+            # Not a Bambu machine. It may still be a Moonraker printer, which
+            # is cheap to ask: one HTTP request, and only to a host that has
+            # port 80 open. Hosts with neither port cost nothing extra.
+            if await self._check_port(ip, self.MOONRAKER_PORT, timeout):
+                await self._probe_snapmaker(ip, timeout)
             return
 
         # Also check MQTT port (8883) for confirmation
@@ -417,6 +430,33 @@ class SubnetScanner:
             discovered_at=datetime.now(timezone.utc).isoformat(),
         )
         self._discovered[ip] = printer
+
+    async def _probe_snapmaker(self, ip: str, timeout: float):
+        """Identify a Snapmaker printer by what its Moonraker reports.
+
+        Vanilla Moonraker (a Voron, a converted Ender) answers the same
+        endpoint without Snapmaker's ``product_info`` block and is skipped:
+        Bambuddy's U1 driver leans on U1-only firmware macros, so offering to
+        add an unrelated Klipper machine would only produce a half-working
+        printer card.
+        """
+        from backend.app.services.printer_drivers.snapmaker_u1 import probe as u1_probe
+
+        result = await u1_probe(ip, timeout=timeout)
+        if not result.get("success"):
+            return
+
+        logger.info("Found Snapmaker printer at %s (%s)", ip, result.get("model"))
+        self._discovered[ip] = DiscoveredPrinter(
+            # A U1 reports its own serial; the synthetic fallback keeps the
+            # dialog's duplicate check working when it does not.
+            serial=result.get("serial") or f"u1-{ip.replace('.', '-')}",
+            name=result.get("name") or f"Snapmaker at {ip}",
+            ip_address=ip,
+            model=result.get("model") or "U1",
+            discovered_at=datetime.now(timezone.utc).isoformat(),
+            printer_type=PRINTER_TYPE_SNAPMAKER_U1,
+        )
 
     async def _get_printer_info_ssdp(self, ip: str, timeout: float) -> tuple[str | None, str | None, str | None]:
         """Try to get printer info via SSDP unicast query."""
