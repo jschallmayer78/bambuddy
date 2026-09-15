@@ -21,8 +21,8 @@
 
 FROM node:22-bookworm-slim AS frontend-builder
 
-ARG BAMBUDDY_REPO=https://github.com/maziggy/bambuddy.git
-ARG BAMBUDDY_REF=main
+ARG BAMBUDDY_REPO=https://github.com/jschallmayer78/bambuddy.git
+ARG BAMBUDDY_REF=feature/ha-addon
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git ca-certificates \
