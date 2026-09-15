@@ -17,6 +17,7 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { appUrl } from '../utils/basePath';
 import { Copy, Plus, Trash2, AlertTriangle } from 'lucide-react';
 import { api, type LongLivedCameraToken, type LongLivedTokenScope } from '../api/client';
 import { useToast } from '../contexts/ToastContext';
@@ -220,7 +221,7 @@ function JustCreatedModal({ token, onClose }: JustCreatedModalProps) {
   // hand from the docs.
   const camWallUrl =
     token.scope === 'camwall' && plaintext
-      ? `${window.location.origin}/camwall?token=${encodeURIComponent(plaintext)}`
+      ? appUrl(`camwall?token=${encodeURIComponent(plaintext)}`)
       : null;
 
   // For an overlay token, likewise the artefact is the URL. It targets one
@@ -228,7 +229,7 @@ function JustCreatedModal({ token, onClose }: JustCreatedModalProps) {
   // from the printer's URL on the main page (#2613).
   const overlayUrl =
     token.scope === 'overlay' && plaintext
-      ? `${window.location.origin}/overlay/1?token=${encodeURIComponent(plaintext)}`
+      ? appUrl(`overlay/1?token=${encodeURIComponent(plaintext)}`)
       : null;
 
   const copyText = async (value: string) => {

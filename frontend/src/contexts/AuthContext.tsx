@@ -1,6 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { ApiError, api, getAuthToken, setAuthToken } from '../api/client';
 import type { LoginResponse, Permission, TokenPersistence, UserResponse } from '../api/client';
+import { appPath, BASE_PATH } from '../utils/basePath';
 
 interface AuthContextType {
   user: UserResponse | null;
@@ -149,11 +150,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Only redirect if setup is truly required (first time setup)
     // Don't redirect if user manually navigated to /setup or is on camera page
     if (!loading && requiresSetup && !authEnabled) {
-      const currentPath = window.location.pathname;
+      // Compared and built against the app root: behind HA ingress the
+      // location carries a per-session prefix that these literals don't, and a
+      // full-page navigation bypasses the router's basename.
+      const currentPath = window.location.pathname.slice(BASE_PATH.length - 1);
       // Only redirect if not already on setup page or camera page, and haven't redirected yet
       if (currentPath !== '/setup' && !currentPath.startsWith('/camera/') && !hasRedirectedRef.current) {
         hasRedirectedRef.current = true;
-        window.location.href = '/setup';
+        window.location.href = appPath('setup');
       }
     } else if (!requiresSetup) {
       // Reset redirect flag when setup is no longer required
@@ -182,7 +186,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     api.logout().catch(() => {
       // Ignore logout errors
     });
-    window.location.href = '/login';
+    window.location.href = appPath('login');
   };
 
   const refreshUser = async () => {

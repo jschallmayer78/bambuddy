@@ -1,4 +1,17 @@
-if ('serviceWorker' in navigator) {
+// App root, as the server declared it in <base href> (see
+// backend/app/core/ingress.py). '/' on direct access; a per-session
+// /api/hassio_ingress/<token>/ path behind Home Assistant's ingress proxy.
+// Read the tag rather than document.baseURI: with no tag, baseURI is the
+// current page URL, which on a deep route would look like a prefix.
+const baseEl = document.querySelector('base');
+const BASE_PATH = (baseEl && baseEl.getAttribute('href')) || '/';
+
+// Never register a service worker behind ingress. Its scope would be the
+// per-session prefix, so every URL it precached and every response it cached
+// would be dead the next time Home Assistant hands out a new session path --
+// leaving a worker serving 404s for a prefix that no longer exists, with no
+// page left under that scope to unregister it from.
+if ('serviceWorker' in navigator && BASE_PATH === '/') {
   if (location.pathname.startsWith('/spoolbuddy')) {
     navigator.serviceWorker.getRegistrations().then((regs) => {
       if (regs.length > 0) {

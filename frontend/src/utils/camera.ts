@@ -6,6 +6,8 @@
  * chosen per click from the camera button's own menu, and the stored setting
  * survives only as the default a browser starts from.
  */
+import { appPath } from './basePath';
+
 export type CameraViewMode = 'window' | 'embedded';
 
 /** The mode the last camera button click chose, in this browser. */
@@ -78,5 +80,5 @@ export function openCameraWindow(printerId: number): void {
     .filter(Boolean)
     .join(',');
 
-  window.open(`/camera/${printerId}`, `camera-${printerId}`, features);
+  window.open(appPath(`camera/${printerId}`), `camera-${printerId}`, features);
 }

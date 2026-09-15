@@ -1,6 +1,10 @@
 import type { ArchivePlatesResponse, LibraryFilePlatesResponse } from '../types/plates';
+import { appPath } from '../utils/basePath';
 
-const API_BASE = '/api/v1';
+// Resolved against the app root rather than hard-coded to "/api/v1" so the same
+// build works on its own port and under Home Assistant's per-session ingress
+// prefix. See utils/basePath.ts for the whole contract.
+const API_BASE = appPath('api/v1');
 
 export class ApiError extends Error {
   status: number;
@@ -68,8 +72,24 @@ export function getAuthToken(): string | null {
 // (these can't send Authorization headers, so a query param token is used)
 let streamToken: string | null = null;
 
+// Listeners let a component re-render when the token arrives after it first
+// painted. The <img>-based views used to be patched in place by
+// rewriteMediaSrcWithToken, but a live stream is now read by fetch() from a URL
+// captured at render time, so it needs the token as reactive state instead.
+const streamTokenListeners = new Set<() => void>();
+
 export function setStreamToken(token: string | null) {
+  if (token === streamToken) return;
   streamToken = token;
+  streamTokenListeners.forEach((listener) => listener());
+}
+
+/** Subscribe to stream-token changes. Shaped for ``useSyncExternalStore``. */
+export function subscribeStreamToken(listener: () => void): () => void {
+  streamTokenListeners.add(listener);
+  return () => {
+    streamTokenListeners.delete(listener);
+  };
 }
 
 export function getStreamToken(): string | null {
@@ -4537,7 +4557,7 @@ export const api = {
   // so a future caller can't accidentally substitute an attacker-
   // controlled URL where this is consumed.
   oidcProviderIconUrl: (id: number): SameOriginUrl =>
-    `/api/v1/auth/oidc/providers/${id}/icon` as SameOriginUrl,
+    `${API_BASE}/auth/oidc/providers/${id}/icon` as SameOriginUrl,
   deleteOIDCProviderIcon: (id: number) =>
     request<void>(`/auth/oidc/providers/${id}/icon`, { method: 'DELETE' }),
   refreshOIDCProviderIcon: (id: number) =>

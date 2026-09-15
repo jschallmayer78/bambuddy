@@ -5,6 +5,8 @@ import { useTranslation } from 'react-i18next';
 import { Layers, Clock, Timer, Printer, Flame, Square, Box } from 'lucide-react';
 import { api, ApiError, withStreamToken } from '../api/client';
 import { formatDuration, formatETA, type TimeFormat } from '../utils/date';
+import { appPath, appWsUrl } from '../utils/basePath';
+import { useMjpegStream } from '../hooks/useMjpegStream';
 
 type TFunction = (key: string, options?: Record<string, unknown>) => string;
 
@@ -247,9 +249,8 @@ export function StreamOverlayPage() {
       }
       if (cancelled) return;
 
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const tokenParam = wsToken ? `?token=${encodeURIComponent(wsToken)}` : '';
-      const wsUrl = `${protocol}//${window.location.host}/api/v1/ws${tokenParam}`;
+      const wsUrl = `${appWsUrl('api/v1/ws')}${tokenParam}`;
       ws = new WebSocket(wsUrl);
 
       ws.onmessage = (event) => {
@@ -288,6 +289,21 @@ export function StreamOverlayPage() {
       setImageKey(Date.now());
     }, 3000);
   };
+
+  // Append the kiosk token directly rather than leaning on withStreamToken's
+  // module cache — the cache is populated by an effect and would miss the first
+  // render (a 401 flash before the retry). The logged-in path keeps the cache.
+  const camPath = appPath(`api/v1/printers/${id}/camera/stream?fps=${config.fps}&t=${imageKey}`);
+  const streamUrl = kiosk && token
+    ? `${camPath}&token=${encodeURIComponent(token)}`
+    : withStreamToken(camPath);
+
+  // Read the MJPEG stream ourselves and paint blob frames — see
+  // utils/mjpegPlayer.ts. Sits above the `if (!id)` bail-out below because
+  // hooks cannot be called conditionally.
+  const frameUrl = useMjpegStream(id > 0 && config.showCamera ? streamUrl : null, {
+    onError: handleStreamError,
+  });
 
   if (!id) {
     return (
@@ -365,25 +381,18 @@ export function StreamOverlayPage() {
       });
     }
   }
-  // Append the kiosk token directly rather than leaning on withStreamToken's
-  // module cache — the cache is populated by an effect and would miss the first
-  // render (a 401 flash before the retry). The logged-in path keeps the cache.
-  const camPath = `/api/v1/printers/${id}/camera/stream?fps=${config.fps}&t=${imageKey}`;
-  const streamUrl = kiosk && token
-    ? `${camPath}&token=${encodeURIComponent(token)}`
-    : withStreamToken(camPath);
-
   return (
     <div className="min-h-screen bg-black relative overflow-hidden">
       {/* Camera feed - fullscreen background (optional) */}
       {config.showCamera && (
         <img
-          key={imageKey}
-          src={streamUrl}
+          // src is a blob URL for the current frame; the stream being read is
+          // recorded on data-stream-url (devtools, and what tests assert on).
+          data-stream-url={streamUrl}
+          src={frameUrl || undefined}
           alt={t('streamOverlay.cameraStream')}
           className="absolute inset-0 w-full h-full object-contain"
           style={printer?.camera_rotation ? { transform: `rotate(${printer.camera_rotation}deg)` } : undefined}
-          onError={handleStreamError}
         />
       )}
 
@@ -395,7 +404,7 @@ export function StreamOverlayPage() {
         className="absolute top-4 right-4 z-10"
       >
         <img
-          src="/img/bambuddy_logo_dark_transparent.png"
+          src={appPath('img/bambuddy_logo_dark_transparent.png')}
           alt="Bambuddy"
           className={`${sizes.logoHeight} object-contain drop-shadow-lg hover:scale-105 transition-transform`}
         />

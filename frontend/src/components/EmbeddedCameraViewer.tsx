@@ -8,6 +8,9 @@ import { useAuth } from '../contexts/AuthContext';
 import { ChamberLight } from './icons/ChamberLight';
 import { SkipObjectsModal, SkipObjectsIcon } from './SkipObjectsModal';
 import { CameraDiagnoseModal } from './CameraDiagnoseModal';
+import { appPath } from '../utils/basePath';
+import { useMjpegStream } from '../hooks/useMjpegStream';
+import { useStreamTokenValue } from '../hooks/useCameraStreamToken';
 
 interface EmbeddedCameraViewerProps {
   printerId: number;
@@ -156,7 +159,7 @@ export function EmbeddedCameraViewer({ printerId, printerName, viewerIndex = 0, 
   const stopSentRef = useRef(false);
   useEffect(() => {
     stopSentRef.current = false;
-    const stopUrl = `/api/v1/printers/${printerId}/camera/stop`;
+    const stopUrl = appPath(`api/v1/printers/${printerId}/camera/stop`);
 
     const sendStopOnce = () => {
       if (printerId > 0 && !stopSentRef.current) {
@@ -459,7 +462,7 @@ export function EmbeddedCameraViewer({ printerId, printerName, viewerIndex = 0, 
     const stopHeaders: Record<string, string> = {};
     const stopToken = getAuthToken();
     if (stopToken) stopHeaders['Authorization'] = `Bearer ${stopToken}`;
-    fetch(`/api/v1/printers/${printerId}/camera/stop`, { method: 'POST', headers: stopHeaders }).catch(() => {});
+    fetch(appPath(`api/v1/printers/${printerId}/camera/stop`), { method: 'POST', headers: stopHeaders }).catch(() => {});
 
     if (imgRef.current) imgRef.current.src = '';
     setTimeout(() => setImageKey(Date.now()), 100);
@@ -555,7 +558,18 @@ export function EmbeddedCameraViewer({ printerId, printerName, viewerIndex = 0, 
     }
   }, [isDragging, isResizing, dragOffset]);
 
-  const streamUrl = withStreamToken(`/api/v1/printers/${printerId}/camera/stream?fps=15&t=${imageKey}`);
+  // Subscribing re-renders once the stream token is minted: the URL below is
+  // captured by a fetch() at render time, so it can't be patched in the DOM
+  // afterwards the way a plain <img src> was.
+  useStreamTokenValue();
+  const streamUrl = withStreamToken(appPath(`api/v1/printers/${printerId}/camera/stream?fps=15&t=${imageKey}`));
+
+  // Frames come in as blob URLs rather than from the <img>'s own request; see
+  // utils/mjpegPlayer.ts for why that is required behind HA ingress. Parked
+  // while minimized so the backend can drop the upstream camera.
+  const frameUrl = useMjpegStream(isMinimized ? null : streamUrl, {
+    onError: handleStreamError,
+  });
 
   return (
     <div
@@ -701,8 +715,12 @@ export function EmbeddedCameraViewer({ printerId, printerName, viewerIndex = 0, 
           )}
           <img
             ref={imgRef}
-            key={imageKey}
-            src={streamUrl}
+            // The element shows one decoded frame at a time; the stream it is
+            // reading is recorded on data-stream-url so it stays visible in
+            // devtools. undefined, never '': an empty src makes the browser
+            // re-request the page itself.
+            data-stream-url={streamUrl}
+            src={frameUrl || undefined}
             alt="Camera stream"
             className="max-w-full max-h-full object-contain select-none"
             style={{

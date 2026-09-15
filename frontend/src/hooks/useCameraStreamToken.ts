@@ -1,10 +1,27 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useSyncExternalStore } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, setStreamToken, getStreamToken, withStreamToken } from '../api/client';
+import {
+  api,
+  setStreamToken,
+  getStreamToken,
+  subscribeStreamToken,
+  withStreamToken,
+} from '../api/client';
 import { useAuth } from '../contexts/AuthContext';
 
 /**
- * Walks the DOM and updates every <img>/<video> pointing at /api/v1/ so its
+ * The current stream token, as reactive state.
+ *
+ * Components that hand a token-bearing URL to something other than the DOM —
+ * a fetch(), notably the MJPEG player — cannot be fixed up by
+ * rewriteMediaSrcWithToken below, so they subscribe here and re-render instead.
+ */
+export function useStreamTokenValue(): string | null {
+  return useSyncExternalStore(subscribeStreamToken, getStreamToken, () => null);
+}
+
+/**
+ * Walks the DOM and updates every <img>/<video> pointing at the API so its
  * src carries the current stream token. Exported for unit testing; called
  * from useStreamTokenSync when the token arrives after first render.
  */
@@ -13,7 +30,10 @@ export function rewriteMediaSrcWithToken(root: ParentNode, token: string): numbe
   let updated = 0;
   root
     .querySelectorAll<HTMLImageElement | HTMLVideoElement>(
-      'img[src*="/api/v1/"], video[src*="/api/v1/"]'
+      // No leading slash: under ingress the attribute reads
+      // "/api/hassio_ingress/<session>/api/v1/...". Live MJPEG views hold a
+      // blob: URL and are deliberately not matched — they re-fetch instead.
+      'img[src*="api/v1/"], video[src*="api/v1/"]'
     )
     .forEach((el) => {
       const src = el.getAttribute('src') || '';

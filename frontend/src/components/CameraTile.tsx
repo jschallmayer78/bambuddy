@@ -3,6 +3,9 @@ import { useTranslation } from 'react-i18next';
 import { AlertTriangle, VideoOff, WifiOff } from 'lucide-react';
 import { getAuthToken, withStreamToken } from '../api/client';
 import { formatDuration } from '../utils/date';
+import { appPath } from '../utils/basePath';
+import { useMjpegStream } from '../hooks/useMjpegStream';
+import { useStreamTokenValue } from '../hooks/useCameraStreamToken';
 
 export type CameraTileMode = 'live' | 'snapshot' | 'paused';
 export type CameraTileStatusMode = 'off' | 'compact' | 'full';
@@ -90,7 +93,7 @@ export function CameraTile({
       const headers: Record<string, string> = {};
       const token = getAuthToken();
       if (token) headers['Authorization'] = `Bearer ${token}`;
-      fetch(`/api/v1/printers/${printerId}/camera/stop`, {
+      fetch(appPath(`api/v1/printers/${printerId}/camera/stop`), {
         method: 'POST',
         keepalive: true,
         headers,
@@ -106,7 +109,7 @@ export function CameraTile({
         const headers: Record<string, string> = {};
         const token = getAuthToken();
         if (token) headers['Authorization'] = `Bearer ${token}`;
-        fetch(`/api/v1/printers/${printerId}/camera/stop`, {
+        fetch(appPath(`api/v1/printers/${printerId}/camera/stop`), {
           method: 'POST',
           keepalive: true,
           headers,
@@ -121,12 +124,27 @@ export function CameraTile({
     return () => clearInterval(interval);
   }, [mode, snapshotIntervalMs]);
 
+  // The return value is unused — withStreamToken reads the same module state —
+  // but subscribing is what re-renders the tile when the token lands. It is
+  // minted asynchronously, and the live stream is now read by fetch() from a
+  // URL captured at render time, so a tile that first painted without a token
+  // has to re-render to pick one up (a plain <img> was patched in place).
+  useStreamTokenValue();
   const liveUrl = withStreamToken(
-    `/api/v1/printers/${printerId}/camera/stream?fps=${LIVE_FPS}&t=${bust}`,
+    appPath(`api/v1/printers/${printerId}/camera/stream?fps=${LIVE_FPS}&t=${bust}`),
   );
   const snapshotUrl = withStreamToken(
-    `/api/v1/printers/${printerId}/camera/snapshot?t=${bust}`,
+    appPath(`api/v1/printers/${printerId}/camera/snapshot?t=${bust}`),
   );
+
+  // Live frames arrive as blob URLs rather than being decoded from the <img>'s
+  // own request — see utils/mjpegPlayer.ts for why that is necessary behind
+  // Home Assistant's ingress proxy.
+  const isLive = mode === 'live' && connected && !errored;
+  const liveFrameUrl = useMjpegStream(isLive ? liveUrl : null, {
+    onError: () => setErrored(true),
+  });
+  const imageSrc = mode === 'live' ? liveFrameUrl : snapshotUrl;
 
   // A kiosk wall passes no onClick — there is no pointer at a TV, and the page
   // is authenticated by a token that cannot open the single-camera view. Render
@@ -166,16 +184,21 @@ export function CameraTile({
           <VideoOff className="h-7 w-7" aria-hidden="true" />
           <span className="text-xs">{t('printers.camWall.noSignal')}</span>
         </div>
+      ) : !imageSrc ? (
+        // Live stream connecting: no src yet. Deliberately blank rather than a
+        // spinner — an empty src attribute would make the browser re-request
+        // the page and fire onError, and a wall of spinners reads as broken.
+        <div className="absolute inset-0 bg-black" />
       ) : (
         <img
-          key={`${mode}-${bust}`}
-          src={mode === 'live' ? liveUrl : snapshotUrl}
+          key={mode === 'live' ? 'live' : `snapshot-${bust}`}
+          src={imageSrc}
           alt={printerName}
           draggable={false}
           loading="lazy"
           className="h-full w-full select-none object-contain"
           style={{ transform }}
-          onError={() => setErrored(true)}
+          onError={mode === 'live' ? undefined : () => setErrored(true)}
         />
       )}
 

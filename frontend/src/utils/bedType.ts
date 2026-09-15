@@ -3,8 +3,9 @@
 // or project_settings.config). BambuStudio and OrcaSlicer disagree on a few
 // labels for the same physical plate, so this map normalises both spellings
 // to a single icon.
+import { appPath } from './basePath';
 
-const ICON_BASE = '/img/bed';
+const ICON_BASE = appPath('img/bed');
 
 interface BedTypeInfo {
   icon: string;

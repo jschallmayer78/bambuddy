@@ -157,21 +157,23 @@ describe('CameraPage', () => {
 
       renderCameraPage(1);
 
-      // Before the token resolves the <img> should not have a src pointing at
-      // the stream endpoint — otherwise the backend would 401 with the
-      // "Valid camera stream token required" error from #979.
+      // Before the token resolves nothing should be pointing at the stream
+      // endpoint — otherwise the backend would 401 with the "Valid camera
+      // stream token required" error from #979. (The <img>'s own src is a blob
+      // URL for the current frame now; data-stream-url is the URL the MJPEG
+      // player is reading, which is what matters here.)
       await waitFor(() => {
         expect(screen.getByText('X1 Carbon')).toBeInTheDocument();
       });
       const img = document.querySelector('img') as HTMLImageElement | null;
       expect(img).not.toBeNull();
-      expect(img?.getAttribute('src') || '').not.toContain('/camera/stream');
+      expect(img?.getAttribute('data-stream-url') || '').not.toContain('/camera/stream');
 
       resolveToken(undefined);
 
       // After the token resolves the image src picks it up as ?token=...
       await waitFor(() => {
-        const src = (document.querySelector('img') as HTMLImageElement | null)?.getAttribute('src') || '';
+        const src = (document.querySelector('img') as HTMLImageElement | null)?.getAttribute('data-stream-url') || '';
         expect(src).toContain('/camera/stream');
         expect(src).toContain('token=tok-abc');
       });
@@ -202,15 +204,15 @@ describe('CameraPage', () => {
         expect(screen.getByText('X1 Carbon')).toBeInTheDocument();
       });
 
-      // Token still in flight: the <img> must not already be pulling the stream.
-      const early = (document.querySelector('img') as HTMLImageElement | null)?.getAttribute('src') || '';
+      // Token still in flight: the player must not already be pulling the stream.
+      const early = (document.querySelector('img') as HTMLImageElement | null)?.getAttribute('data-stream-url') || '';
       expect(early).not.toContain('/camera/stream');
 
       resolveToken();
 
       // The first — and only — stream URL the browser ever sees is the tokened one.
       await waitFor(() => {
-        const src = (document.querySelector('img') as HTMLImageElement | null)?.getAttribute('src') || '';
+        const src = (document.querySelector('img') as HTMLImageElement | null)?.getAttribute('data-stream-url') || '';
         expect(src).toContain('/api/v1/printers/1/camera/stream');
         expect(src).toContain('token=tok-xyz');
       });
@@ -227,7 +229,7 @@ describe('CameraPage', () => {
       renderCameraPage(1);
 
       await waitFor(() => {
-        const src = (document.querySelector('img') as HTMLImageElement | null)?.getAttribute('src') || '';
+        const src = (document.querySelector('img') as HTMLImageElement | null)?.getAttribute('data-stream-url') || '';
         expect(src).toContain('/api/v1/printers/1/camera/stream');
       });
     });
@@ -238,7 +240,7 @@ describe('CameraPage', () => {
       renderCameraPage(1);
 
       await waitFor(() => {
-        const src = (document.querySelector('img') as HTMLImageElement | null)?.getAttribute('src') || '';
+        const src = (document.querySelector('img') as HTMLImageElement | null)?.getAttribute('data-stream-url') || '';
         expect(src).toContain('fps=15');
       });
     });
@@ -247,7 +249,7 @@ describe('CameraPage', () => {
       renderCameraPage(1, '?fps=5');
 
       await waitFor(() => {
-        const src = (document.querySelector('img') as HTMLImageElement | null)?.getAttribute('src') || '';
+        const src = (document.querySelector('img') as HTMLImageElement | null)?.getAttribute('data-stream-url') || '';
         expect(src).toContain('fps=5');
       });
     });
@@ -256,7 +258,7 @@ describe('CameraPage', () => {
       renderCameraPage(1, '?fps=60');
 
       await waitFor(() => {
-        const src = (document.querySelector('img') as HTMLImageElement | null)?.getAttribute('src') || '';
+        const src = (document.querySelector('img') as HTMLImageElement | null)?.getAttribute('data-stream-url') || '';
         expect(src).toContain('fps=30');
       });
     });
@@ -265,7 +267,7 @@ describe('CameraPage', () => {
       renderCameraPage(1, '?fps=0');
 
       await waitFor(() => {
-        const src = (document.querySelector('img') as HTMLImageElement | null)?.getAttribute('src') || '';
+        const src = (document.querySelector('img') as HTMLImageElement | null)?.getAttribute('data-stream-url') || '';
         expect(src).toContain('fps=1');
       });
     });
@@ -274,7 +276,7 @@ describe('CameraPage', () => {
       renderCameraPage(1, '?fps=invalid');
 
       await waitFor(() => {
-        const src = (document.querySelector('img') as HTMLImageElement | null)?.getAttribute('src') || '';
+        const src = (document.querySelector('img') as HTMLImageElement | null)?.getAttribute('data-stream-url') || '';
         expect(src).toContain('fps=15');
       });
     });

@@ -842,6 +842,32 @@ async def create_stream_token(
     return {"token": await create_camera_stream_token()}
 
 
+# The frame delimiter every MJPEG generator in this codebase writes. It travels
+# in the media type as `boundary=frame`, which is where a browser reads it
+# from — and where Home Assistant's ingress proxy loses it.
+MJPEG_BOUNDARY = "frame"
+MJPEG_MEDIA_TYPE = f"multipart/x-mixed-replace; boundary={MJPEG_BOUNDARY}"
+
+# Why the boundary is repeated in a header of its own: the Supervisor's ingress
+# rebuilds the response's Content-Type from its base type
+# (``content_type.partition(";")[0]``), so a stream that leaves here as
+# `multipart/x-mixed-replace; boundary=frame` arrives at the browser as bare
+# `multipart/x-mixed-replace`. No browser can parse a multipart body without
+# its boundary, so an <img> pointed at the stream shows nothing at all — while
+# the same URL works perfectly on direct access, which is what makes the bug
+# so confusing to look at. A parameterless header survives that rewrite, and
+# the frontend's player falls back to it. Harmless on direct access, where the
+# media type already carries the answer.
+MJPEG_BOUNDARY_HEADER = "X-Bambuddy-Boundary"
+
+_MJPEG_HEADERS = {
+    "Cache-Control": "no-cache, no-store, must-revalidate",
+    "Pragma": "no-cache",
+    "Expires": "0",
+    MJPEG_BOUNDARY_HEADER: MJPEG_BOUNDARY,
+}
+
+
 @router.get("/{printer_id}/camera/stream")
 async def camera_stream(
     printer_id: int,
@@ -975,12 +1001,8 @@ async def camera_stream(
 
         return StreamingResponse(
             external_stream_wrapper(),
-            media_type="multipart/x-mixed-replace; boundary=frame",
-            headers={
-                "Cache-Control": "no-cache, no-store, must-revalidate",
-                "Pragma": "no-cache",
-                "Expires": "0",
-            },
+            media_type=MJPEG_MEDIA_TYPE,
+            headers=_MJPEG_HEADERS,
         )
 
     # Validate FPS - A1/P1 models max out at ~5 FPS
@@ -1069,12 +1091,8 @@ async def camera_stream(
 
     return StreamingResponse(
         _generate(),
-        media_type="multipart/x-mixed-replace; boundary=frame",
-        headers={
-            "Cache-Control": "no-cache, no-store, must-revalidate",
-            "Pragma": "no-cache",
-            "Expires": "0",
-        },
+        media_type=MJPEG_MEDIA_TYPE,
+        headers=_MJPEG_HEADERS,
     )
 
 
