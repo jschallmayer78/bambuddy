@@ -1,5 +1,6 @@
 import { Component, type ReactNode, type ErrorInfo } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { BASE_PATH } from './utils/basePath';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Layout } from './components/Layout';
 import { PrintersPage } from './pages/PrintersPage';
@@ -172,7 +173,14 @@ function App() {
             <ColorCatalogProvider>
             <SliceJobTrackerProvider>
             <StreamTokenSync />
-            <BrowserRouter>
+            {/* basename, not "/": under Home Assistant ingress the whole app
+                hangs off a per-session prefix, and without it every <Link> and
+                navigate('/queue') would push a path outside that prefix — the
+                proxy would 404 it. BASE_PATH is "/" on direct access, so this
+                is a no-op there. Route paths and navigate() targets stay
+                written as if mounted at the root; the router adds and strips
+                the prefix. */}
+            <BrowserRouter basename={BASE_PATH}>
               <Routes>
                 {/* Setup page - only accessible if auth not enabled */}
                 <Route path="/setup" element={<SetupRoute><SetupPage /></SetupRoute>} />

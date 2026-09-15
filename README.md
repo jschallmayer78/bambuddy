@@ -689,6 +689,20 @@ Open **http://localhost:8000** and add your printer!
 
 > **Need detailed instructions?** See the [Installation Guide](http://wiki.bambuddy.cool/getting-started/installation/)
 
+### Home Assistant add-on
+
+Bambuddy can run as a Home Assistant add-on and appear in Home Assistant's
+sidebar, signed in with the Home Assistant account that opened it.
+
+1. Settings → Add-ons → Add-on Store → ⋮ → **Repositories**
+2. Add `https://github.com/maziggy/bambuddy`
+3. Install **Bambuddy**, then **Start**.
+
+The add-on runs on the host network — printer discovery, MQTT, FTPS and the
+virtual printer all need it — so Bambuddy is also reachable directly on its own
+port, outside Home Assistant's access control. See
+[ha-addon/README.md](ha-addon/README.md) for the options and what that implies.
+
 ### Windows Native Installation
 
 Windows PowerShell (run as Administrator — the installer self-elevates via UAC if not):

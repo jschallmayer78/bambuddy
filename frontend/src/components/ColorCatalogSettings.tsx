@@ -6,6 +6,7 @@ import type { ColorCatalogEntry } from '../api/client';
 import { useToast } from '../contexts/ToastContext';
 import { Card, CardHeader, CardContent } from './Card';
 import { ConfirmModal } from './ConfirmModal';
+import { appPath } from '../utils/basePath';
 import { FilamentSwatch } from './FilamentSwatch';
 import { FILAMENT_EFFECT_OPTIONS } from './filamentSwatchHelpers';
 
@@ -188,7 +189,7 @@ export function ColorCatalogSettings() {
       if (token) {
         headers['Authorization'] = `Bearer ${token}`;
       }
-      const response = await fetch('/api/v1/inventory/colors/sync', { method: 'POST', headers });
+      const response = await fetch(appPath('api/v1/inventory/colors/sync'), { method: 'POST', headers });
       if (!response.ok) throw new Error('Failed to start sync');
 
       const reader = response.body?.getReader();

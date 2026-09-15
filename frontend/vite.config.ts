@@ -8,15 +8,21 @@ const backendUrl = `http://localhost:${backendPort}`
 
 
 export default defineConfig({
-  // Default base ('/') emits absolute asset URLs (/assets/...). Required so
-  // deep SPA routes (camera popup at /camera/<id>, /projects/<id>, kiosk
-  // /spoolbuddy/ams, refresh on any nested route) resolve their <script>
-  // and <link> tags to /assets/... instead of /<route-prefix>/assets/...,
-  // which the SPA fallback would otherwise return as text/html and the
-  // browser would refuse to execute (#1221). The earlier `base: ''` partial
-  // fix for subpath reverse proxies (#1195, wontfix) is reverted — that
-  // audience uses NPM + Cloudflare Tunnel at a real domain per the
-  // documented workaround, which doesn't depend on this setting.
+  // Relative asset URLs (./assets/...), which is what lets the same build serve
+  // both directly and under Home Assistant's ingress prefix
+  // (/api/hassio_ingress/<session>/), a path that is unknown at build time.
+  //
+  // This was `base: '/'` because relative URLs used to resolve against the
+  // current route: a refresh on a deep route (/camera/<id>, /projects/<id>,
+  // kiosk /spoolbuddy/ams) asked for /<route-prefix>/assets/..., the SPA
+  // fallback answered with text/html, and the browser refused to execute it
+  // (#1221). What changed since: the server now injects `<base href>` as the
+  // first element in <head> (backend/app/core/ingress.py), so every relative
+  // URL in the document resolves against the app root — "/" on direct access,
+  // the ingress prefix behind the proxy — at any route depth. #1221's failure
+  // mode is gone, and the subpath reverse-proxy case (#1195) is covered by the
+  // same mechanism.
+  base: './',
   plugins: [react()],
   build: {
     outDir: '../static',

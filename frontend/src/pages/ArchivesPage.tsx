@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
+import { appPath } from '../utils/basePath';
 import {
   Download,
   Trash2,
@@ -774,7 +775,7 @@ function ArchiveCard({
     ...(archive.project_id && archive.project_name ? [{
       label: t('archives.menu.goToProject', { name: archive.project_name }),
       icon: <FolderKanban className="w-4 h-4 text-bambu-green" />,
-      onClick: () => window.location.href = '/projects',
+      onClick: () => window.location.href = appPath('projects'),
     }] : []),
     {
       label: t('archives.menu.addToProject'),
@@ -2188,7 +2189,7 @@ function ArchiveListRow({
     ...(archive.project_id && archive.project_name ? [{
       label: t('archives.menu.goToProject', { name: archive.project_name }),
       icon: <FolderKanban className="w-4 h-4 text-bambu-green" />,
-      onClick: () => window.location.href = '/projects',
+      onClick: () => window.location.href = appPath('projects'),
     }] : []),
     {
       label: t('archives.menu.addToProject'),

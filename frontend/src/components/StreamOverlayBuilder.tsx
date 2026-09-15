@@ -10,6 +10,7 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { appUrl } from '../utils/basePath';
 import { Copy, ExternalLink, Eye, EyeOff } from 'lucide-react';
 import { api, type Printer } from '../api/client';
 import { useToast } from '../contexts/ToastContext';
@@ -80,7 +81,7 @@ export function StreamOverlayBuilder() {
     if (fps !== DEFAULT_FPS) params.set('fps', String(fps));
     if (!showCamera) params.set('camera', 'false');
     if (token.trim()) params.set('token', token.trim());
-    return `${window.location.origin}/overlay/${id}?${params.toString()}`;
+    return appUrl(`overlay/${id}?${params.toString()}`);
   }, [printerId, fields, size, fps, showCamera, token]);
 
   const toggleField = (key: string) => {

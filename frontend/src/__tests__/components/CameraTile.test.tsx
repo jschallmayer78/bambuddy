@@ -24,7 +24,13 @@ describe('CameraTile', () => {
     vi.restoreAllMocks();
   });
 
-  it('renders the live stream URL in live mode', async () => {
+  // Live mode no longer hands the stream URL to <img src>: the MJPEG player
+  // fetches it and paints blob frames (see utils/mjpegPlayer.ts), so the
+  // request the player makes is what identifies the stream.
+  it('requests the live stream in live mode', async () => {
+    const fetchMock = vi.spyOn(global, 'fetch').mockResolvedValue(
+      new Response(null, { status: 200 }),
+    );
     render(
       <CameraTile
         printerId={42}
@@ -35,9 +41,11 @@ describe('CameraTile', () => {
       />,
     );
     await flushMicrotasks();
-    const img = screen.getByAltText('X1C-Lab') as HTMLImageElement;
-    expect(img.src).toContain('/api/v1/printers/42/camera/stream');
-    expect(img.src).toContain('fps=8');
+    const streamCalls = fetchMock.mock.calls
+      .map(([url]) => String(url))
+      .filter((url) => url.includes('/api/v1/printers/42/camera/stream'));
+    expect(streamCalls.length).toBeGreaterThan(0);
+    expect(streamCalls[0]).toContain('fps=8');
   });
 
   it('renders the snapshot URL and refreshes on the interval', async () => {

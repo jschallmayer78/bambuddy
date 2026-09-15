@@ -12,7 +12,7 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlparse
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import delete, or_, select, text
@@ -83,6 +83,7 @@ from backend.app.api.routes.maintenance import _get_printer_maintenance_internal
 from backend.app.api.routes.support import init_debug_logging
 from backend.app.core.config import APP_VERSION, settings as app_settings
 from backend.app.core.database import async_session, engine, init_db
+from backend.app.core.ingress import base_href, inject_base_href, is_ingress_request
 from backend.app.core.tasks import spawn_background_task
 from backend.app.core.websocket import ws_manager
 from backend.app.services import print_dispatch_context
@@ -9366,6 +9367,11 @@ PUBLIC_API_ROUTES = {
     "/api/v1/auth/oidc/providers",  # Public list of enabled providers
     "/api/v1/auth/oidc/callback",  # Redirect target from OIDC provider
     "/api/v1/auth/oidc/exchange",  # Exchange short-lived OIDC token for JWT
+    # Home Assistant ingress sign-in. Public because it is the login itself;
+    # it authenticates the caller from the Supervisor's own headers and
+    # refuses every request that did not come through ingress. See
+    # services/ha_ingress_auth.py.
+    "/api/v1/auth/ha-ingress",
     # Version check for updates (no sensitive data)
     "/api/v1/updates/version",
     # Metrics endpoint handles its own prometheus_token authentication
@@ -9499,6 +9505,22 @@ def _frame_ancestors(default_value: str) -> str:
     return f"frame-ancestors {default_value};"
 
 
+def _frame_ancestors_for(request, default_value: str) -> str:
+    """``frame-ancestors`` for one request, honouring Home Assistant's sidebar.
+
+    An ingress request is already being framed by Home Assistant on an origin
+    the add-on cannot know, so it gets ``*`` — including when an operator has
+    configured TRUSTED_FRAME_ORIGINS, whose allowlist would otherwise exclude
+    the very origin doing the framing and leave a blank panel. Every other
+    request keeps the strict behaviour above.
+    """
+    from backend.app.core.ingress import is_ingress_request
+
+    if is_ingress_request(request):
+        return "frame-ancestors *;"
+    return _frame_ancestors(default_value)
+
+
 @app.middleware("http")
 async def security_headers_middleware(request, call_next):
     """Add standard HTTP security headers to every response."""
@@ -9520,7 +9542,19 @@ async def security_headers_middleware(request, call_next):
     # When operators have explicitly allowlisted trusted frame origins (#1191
     # — typically Home Assistant on a different port), drop X-Frame-Options
     # and let the CSP-side frame-ancestors directive govern embedding.
-    if not _TRUSTED_FRAME_ORIGINS:
+    # A request that arrived through Home Assistant's ingress is, by
+    # definition, being rendered inside Home Assistant's sidebar iframe — on
+    # an origin this add-on cannot know (a hostname, an IP, or a Nabu Casa
+    # URL, any of them on a port of the user's choosing). Refusing to be
+    # framed there means a permanently blank panel.
+    #
+    # Relaxing it for those requests only is not the hole it looks like: a
+    # cross-origin iframe load cannot set a request header, so an attacker's
+    # page has no way to make its own framing request carry X-Ingress-Path.
+    # Direct access keeps SAMEORIGIN and frame-ancestors 'none' exactly as
+    # before, which is where a clickjacking attempt would have to land.
+    framed_by_home_assistant = is_ingress_request(request)
+    if not _TRUSTED_FRAME_ORIGINS and not framed_by_home_assistant:
         response.headers["X-Frame-Options"] = "SAMEORIGIN"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     # Content-Security-Policy for the React SPA.
@@ -9543,7 +9577,7 @@ async def security_headers_middleware(request, call_next):
             "font-src 'self' data: https://fonts.gstatic.com; "
             "worker-src 'self' blob:; "
             "object-src 'none'; "
-            "base-uri 'self'; " + _frame_ancestors("'none'")
+            "base-uri 'self'; " + _frame_ancestors_for(request, "'none'")
         )
     else:
         # The streaming overlay is embedded same-origin by the URL builder's
@@ -9568,7 +9602,8 @@ async def security_headers_middleware(request, call_next):
             "font-src 'self' data:; "
             "object-src 'none'; "
             "base-uri 'self'; "
-            "frame-src 'self' http: https:; " + _frame_ancestors("'self'" if embeddable_same_origin else "'none'")
+            "frame-src 'self' http: https:; "
+            + _frame_ancestors_for(request, "'self'" if embeddable_same_origin else "'none'")
         )
     if request.url.scheme == "https":
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
@@ -9848,12 +9883,31 @@ if app_settings.static_dir.exists() and any(app_settings.static_dir.iterdir()):
         )
 
 
-@app.get("/")
-async def serve_frontend():
-    """Serve the React frontend."""
+def _render_index(request: Request) -> Response | None:
+    """The SPA's entry document, with its ``<base href>`` set for this request.
+
+    Returns None when the frontend has not been built, so each caller can keep
+    its own "not built" answer.
+
+    Read from disk per request rather than cached: index.html is a couple of
+    kilobytes, it is served once per page load (Vite's content-hashed bundles
+    carry the traffic), and a cache here would hand stale HTML to everyone
+    after an in-place update — the exact failure ``_HTML_CACHE_HEADERS``
+    exists to prevent one layer up.
+    """
     index_file = app_settings.static_dir / "index.html"
-    if index_file.exists():
-        return FileResponse(index_file, headers=_HTML_CACHE_HEADERS)
+    if not index_file.exists():
+        return None
+    html = inject_base_href(index_file.read_bytes(), base_href(request))
+    return Response(content=html, media_type="text/html", headers=_HTML_CACHE_HEADERS)
+
+
+@app.get("/")
+async def serve_frontend(request: Request):
+    """Serve the React frontend."""
+    response = _render_index(request)
+    if response is not None:
+        return response
     return {
         "message": "Bambuddy API",
         "docs": "/docs",
@@ -9924,7 +9978,7 @@ async def serve_sw_register():
 
 # Catch-all route for React Router (must be last)
 @app.get("/{full_path:path}")
-async def serve_spa(full_path: str):
+async def serve_spa(full_path: str, request: Request):
     """Serve React app for client-side routing."""
     # Don't intercept API routes - raise proper 404 so FastAPI can handle redirects
     if full_path.startswith("api/"):
@@ -9932,8 +9986,11 @@ async def serve_spa(full_path: str):
 
         raise HTTPException(status_code=404, detail="Not found")
 
-    index_file = app_settings.static_dir / "index.html"
-    if index_file.exists():
-        return FileResponse(index_file, headers=_HTML_CACHE_HEADERS)
+    # Deep routes come through here, and they need the base tag just as much as
+    # "/" does: a document served without it falls back to a root-relative base
+    # and every asset request then escapes the ingress prefix.
+    response = _render_index(request)
+    if response is not None:
+        return response
 
     return {"error": "Frontend not built"}

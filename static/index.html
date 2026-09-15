@@ -1,6 +1,13 @@
 <!doctype html>
 <html lang="en">
   <head>
+    <!-- App root. The server replaces this tag per request
+         (backend/app/core/ingress.py): "/" on direct access, the Home
+         Assistant ingress prefix behind the Supervisor proxy. Every relative
+         URL below — and every one the app builds via utils/basePath.ts —
+         resolves against it, so one build serves both. Must stay first in
+         <head>: it only governs the URLs that come after it. -->
+    <base href="/" />
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <!-- L-4: Restrict Referer header to origin-only on cross-origin navigation so
@@ -17,17 +24,17 @@
     <meta name="apple-mobile-web-app-title" content="Bambuddy" />
 
     <!-- Manifest -->
-    <link rel="manifest" href="/manifest.json" />
+    <link rel="manifest" href="manifest.json" />
 
     <!-- Favicons -->
-    <link rel="icon" type="image/png" sizes="32x32" href="/img/favicon-32x32.png" />
-    <link rel="icon" type="image/png" sizes="16x16" href="/img/favicon-16x16.png" />
-    <link rel="apple-touch-icon" sizes="180x180" href="/img/apple-touch-icon.png" />
+    <link rel="icon" type="image/png" sizes="32x32" href="img/favicon-32x32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="img/favicon-16x16.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="img/apple-touch-icon.png" />
 
     <!-- Splash screens for iOS -->
-    <link rel="apple-touch-startup-image" href="/img/android-chrome-512x512.png" />
-    <script type="module" crossorigin src="/assets/index-CH-LgsSx.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-DR-aOvsI.css">
+    <link rel="apple-touch-startup-image" href="img/android-chrome-512x512.png" />
+    <script type="module" crossorigin src="./assets/index-C07jPS0N.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-CET1j65B.css">
   </head>
   <body>
     <div id="root"></div>
@@ -35,6 +42,6 @@
     <!-- Service Worker Registration (skip on SpoolBuddy kiosk).
          Kept as an external file so the CSP `script-src 'self'` covers it
          without needing 'unsafe-inline' or per-build hashes. -->
-    <script src="/sw-register.js"></script>
+    <script src="sw-register.js"></script>
   </body>
 </html>

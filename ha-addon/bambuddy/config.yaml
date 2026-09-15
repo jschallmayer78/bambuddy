@@ -1,0 +1,59 @@
+# Home Assistant add-on manifest.
+#
+# Version is Bambuddy's own version plus an add-on revision, so a change that
+# only touches the packaging (an option, a doc, a Dockerfile fix) can still be
+# offered as an update without pretending the application changed.
+name: Bambuddy
+version: "1.2.5.5-1"
+slug: bambuddy
+description: Archive, monitor and control your 3D printers from Home Assistant
+url: https://github.com/maziggy/bambuddy
+arch:
+  - aarch64
+  - amd64
+init: false
+
+# Printer discovery (SSDP multicast), Bambu's MQTT and FTPS, the camera
+# protocols and the virtual printer all talk to the LAN directly and have to be
+# reachable on it. A bridged add-on network breaks discovery outright and makes
+# the virtual printer invisible to slicers.
+host_network: true
+
+# The sidebar entry. ingress_port is Bambuddy's own port because the add-on is
+# on the host network — there is no separate internal port for the Supervisor
+# to reach. Changing `port` below therefore also changes where ingress points;
+# they are the same listener.
+ingress: true
+ingress_port: 8000
+# Uploads are streamed (a sliced job is tens to hundreds of megabytes) and the
+# camera is a response that never ends. Without this the Supervisor buffers
+# whole request and response bodies.
+ingress_stream: true
+panel_icon: mdi:printer-3d-nozzle
+panel_title: Bambuddy
+panel_admin: false
+
+# Direct access from the LAN, alongside the panel. Left unmapped by default:
+# host_network means the listener is already on the LAN, so this only declares
+# it for Home Assistant's port view.
+ports:
+  8000/tcp: null
+ports_description:
+  8000/tcp: Bambuddy web interface (also reachable without Home Assistant)
+
+# /share is the exchange point with the rest of Home Assistant — drop a sliced
+# file there and it shows up in Bambuddy's file manager.
+map:
+  - share:rw
+
+options:
+  ha_auth: true
+  ha_auth_role: user
+  port: 8000
+  log_level: info
+
+schema:
+  ha_auth: bool
+  ha_auth_role: list(user|admin)
+  port: port
+  log_level: list(trace|debug|info|warning|error|fatal)

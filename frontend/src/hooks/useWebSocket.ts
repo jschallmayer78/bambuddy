@@ -4,6 +4,7 @@ import { useToast } from '../contexts/ToastContext';
 import { useTranslation } from 'react-i18next';
 import { api, ApiError } from '../api/client';
 import { inventoryLocationsQueryKey } from '../utils/inventoryQueries';
+import { appWsUrl } from '../utils/basePath';
 
 // The only auth-failure close code /api/v1/ws emits (websocket.py
 // _WS_CLOSE_UNAUTHORIZED). A 4401 means the ws-token was missing / invalid /
@@ -128,9 +129,11 @@ export function useWebSocket() {
       return;
     }
 
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    // Host *and* path prefix come from the app base: HA's ingress proxies
+    // WebSockets through the same per-session prefix as everything else, so a
+    // hard-coded /api/v1/ws would be proxied to nothing.
     const tokenParam = token ? `?token=${encodeURIComponent(token)}` : '';
-    const wsUrl = `${protocol}//${window.location.host}/api/v1/ws${tokenParam}`;
+    const wsUrl = `${appWsUrl('api/v1/ws')}${tokenParam}`;
 
     const ws = new WebSocket(wsUrl);
 
