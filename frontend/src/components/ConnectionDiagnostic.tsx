@@ -25,6 +25,25 @@ function StatusIcon({ status }: { status: DiagnosticStatus }) {
 }
 
 /**
+ * Variant selector for the Snapmaker U1 checks, which say what happened
+ * through *which* param they carry rather than through a `reason`:
+ * `klipper_ready` fails with either the firmware's own state or a transport
+ * error, and `snapmaker_identity` passes with or without a machine type.
+ * Each case needs its own sentence — the alternative is one that interpolates
+ * a blank where the missing param would have gone.
+ */
+function snapmakerVariant(check: DiagnosticCheck): string | undefined {
+  const params = check.params as
+    | { state?: string; error?: string; machine_type?: string }
+    | undefined;
+  if (check.id === 'klipper_ready' && check.status === 'fail' && !params?.state) return 'error';
+  if (check.id === 'snapmaker_identity' && check.status === 'pass' && !params?.machine_type) {
+    return 'unknown';
+  }
+  return undefined;
+}
+
+/**
  * Presentational checklist — renders one row per diagnostic check plus an
  * overall banner. Shared by the modal and the bug-report panel. The title
  * and per-status detail text are localized via `diagnostic.check.<id>.*`.
@@ -32,10 +51,15 @@ function StatusIcon({ status }: { status: DiagnosticStatus }) {
 export function DiagnosticChecklist({ result }: { result: PrinterDiagnosticResult }) {
   const { t } = useTranslation();
 
+  // The Snapmaker run summarises as pass/fail; fold those onto the Bambu run's
+  // vocabulary so one banner (and one set of strings) covers both.
+  const overall =
+    result.overall === 'pass' ? 'ok' : result.overall === 'fail' ? 'problems' : result.overall;
+
   const overallClass =
-    result.overall === 'ok'
+    overall === 'ok'
       ? 'bg-bambu-green/10 border-bambu-green/30 text-bambu-green'
-      : result.overall === 'warnings'
+      : overall === 'warnings'
         ? 'bg-amber-50 dark:bg-amber-500/10 border-amber-300 dark:border-amber-500/30 text-amber-700 dark:text-amber-300'
         : 'bg-red-50 dark:bg-red-500/10 border-red-300 dark:border-red-500/30 text-red-700 dark:text-red-300';
 
@@ -47,7 +71,8 @@ export function DiagnosticChecklist({ result }: { result: PrinterDiagnosticResul
     // A check may carry a `reason` to select a more specific message variant
     // (e.g. external_storage skip on P1-series → skip_unsupported_model #2524);
     // fall back to the plain per-status text when no variant key exists.
-    const reason = (check.params as { reason?: string } | undefined)?.reason;
+    const reason =
+      (check.params as { reason?: string } | undefined)?.reason ?? snapmakerVariant(check);
     const detail = t(
       `diagnostic.check.${check.id}.${check.status}${reason ? `_${reason}` : ''}`,
       {
@@ -81,7 +106,7 @@ export function DiagnosticChecklist({ result }: { result: PrinterDiagnosticResul
     <div className="space-y-4">
       <ol className="space-y-2">{result.checks.map(renderCheck)}</ol>
       <div className={`rounded-lg border px-4 py-3 text-sm ${overallClass}`}>
-        {t(`diagnostic.overall.${result.overall}`)}
+        {t(`diagnostic.overall.${overall}`)}
       </div>
     </div>
   );

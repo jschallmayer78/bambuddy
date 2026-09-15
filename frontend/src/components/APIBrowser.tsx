@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { ChevronDown, ChevronRight, Play, Copy, Loader2, ExternalLink, AlertCircle, CheckCircle } from 'lucide-react';
 import { Card, CardContent } from './Card';
 import { Button } from './Button';
+import { appPath } from '../utils/basePath';
 
 interface OpenAPISchema {
   paths: Record<string, Record<string, EndpointSpec>>;
@@ -589,7 +590,7 @@ export function APIBrowser({ apiKey = '' }: APIBrowserProps) {
             Collapse All
           </Button>
           <a
-            href="/docs"
+            href={appPath('docs')}
             target="_blank"
             rel="noopener noreferrer"
             className="flex items-center gap-1 text-sm text-bambu-green hover:underline"

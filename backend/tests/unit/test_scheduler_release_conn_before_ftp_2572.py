@@ -99,7 +99,7 @@ async def test_connection_released_before_ftp_upload(dispatch_case):
             patch.object(scheduler_module.settings, "base_dir", dispatch_case.base_dir),
             patch("backend.app.services.print_scheduler.printer_manager.is_connected", MagicMock(return_value=True)),
             patch("backend.app.services.print_scheduler.printer_manager.get_status", MagicMock(return_value=None)),
-            patch("backend.app.services.print_scheduler.printer_manager.start_print", MagicMock(return_value=True)),
+            patch("backend.app.services.print_scheduler.printer_manager.start_print", AsyncMock(return_value=True)),
             patch("backend.app.services.print_scheduler.printer_manager.set_awaiting_plate_clear", MagicMock()),
             patch(
                 "backend.app.services.print_scheduler.get_ftp_retry_settings",

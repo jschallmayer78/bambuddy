@@ -10,6 +10,8 @@ import { useStreamTokenSync } from '../hooks/useCameraStreamToken';
 import { ChamberLight } from '../components/icons/ChamberLight';
 import { SkipObjectsModal, SkipObjectsIcon } from '../components/SkipObjectsModal';
 import { CameraDiagnoseModal } from '../components/CameraDiagnoseModal';
+import { appPath } from '../utils/basePath';
+import { useMjpegStream } from '../hooks/useMjpegStream';
 
 const MAX_RECONNECT_ATTEMPTS = 5;
 const INITIAL_RECONNECT_DELAY = 2000; // 2 seconds
@@ -123,7 +125,7 @@ export function CameraPage() {
   const stopSentRef = useRef(false);
 
   useEffect(() => {
-    const stopUrl = `/api/v1/printers/${id}/camera/stop`;
+    const stopUrl = appPath(`api/v1/printers/${id}/camera/stop`);
     stopSentRef.current = false;
 
     const sendStopOnce = () => {
@@ -387,7 +389,7 @@ export function CameraPage() {
       const headers: Record<string, string> = {};
       const token = getAuthToken();
       if (token) headers['Authorization'] = `Bearer ${token}`;
-      fetch(`/api/v1/printers/${id}/camera/stop`, { method: 'POST', headers }).catch(() => {});
+      fetch(appPath(`api/v1/printers/${id}/camera/stop`), { method: 'POST', headers }).catch(() => {});
     }
   };
 
@@ -633,8 +635,16 @@ export function CameraPage() {
   const currentUrl = transitioning || waitingForStreamToken
     ? ''
     : streamMode === 'stream'
-      ? appendToken(`/api/v1/printers/${id}/camera/stream?fps=${fps}&t=${imageKey}`)
-      : appendToken(`/api/v1/printers/${id}/camera/snapshot?t=${imageKey}`);
+      ? appendToken(appPath(`api/v1/printers/${id}/camera/stream?fps=${fps}&t=${imageKey}`))
+      : appendToken(appPath(`api/v1/printers/${id}/camera/snapshot?t=${imageKey}`));
+
+  // Live mode reads the MJPEG stream itself and paints one blob frame at a
+  // time (utils/mjpegPlayer.ts explains why a plain <img src> cannot do this
+  // behind HA ingress). Snapshot mode is an ordinary image request, unchanged.
+  const frameUrl = useMjpegStream(streamMode === 'stream' ? currentUrl || null : null, {
+    onError: handleStreamError,
+  });
+  const imageSrc = streamMode === 'stream' ? frameUrl : currentUrl;
 
   const isDisabled = streamLoading || transitioning || isReconnecting;
 
@@ -798,8 +808,13 @@ export function CameraPage() {
           )}
           <img
             ref={imgRef}
-            key={imageKey}
-            src={currentUrl}
+            key={streamMode}
+            // In live mode src is a blob URL for the current frame, so the
+            // stream being read is recorded here instead — visible in devtools
+            // and the thing tests assert on. undefined, never '': an empty src
+            // makes the browser re-request the page itself.
+            data-stream-url={currentUrl}
+            src={imageSrc || undefined}
             alt={t('camera.cameraStream')}
             className="max-w-full max-h-full object-contain select-none"
             style={{
@@ -807,8 +822,8 @@ export function CameraPage() {
               ...(printer?.camera_rotation === 90 || printer?.camera_rotation === 270 ? { maxWidth: '100vh', maxHeight: '100vw' } : {}),
               cursor: zoomLevel > 1 ? (isPanning ? 'grabbing' : 'grab') : 'default',
             }}
-            onError={currentUrl ? handleStreamError : undefined}
-            onLoad={currentUrl ? handleStreamLoad : undefined}
+            onError={streamMode === 'snapshot' && currentUrl ? handleStreamError : undefined}
+            onLoad={imageSrc ? handleStreamLoad : undefined}
             onMouseDown={handleImageMouseDown}
             draggable={false}
           />

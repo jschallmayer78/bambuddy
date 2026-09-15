@@ -28,6 +28,7 @@ from backend.app.services.print_storage import (
     ftp_probe_paths,
     last_print_storage_verdict,
 )
+from backend.app.services.printer_files import is_snapmaker
 from backend.app.services.printer_manager import printer_manager
 from backend.app.utils.printer_models import has_external_storage, has_remote_storage_toggle
 
@@ -247,6 +248,76 @@ def _same_subnet(ip_a: str, ip_b: str) -> bool | None:
     return net_a == net_b
 
 
+async def _run_snapmaker_diagnostic(ip_address: str, printer: Printer | None) -> PrinterDiagnosticResult:
+    """Connection checks for a Moonraker-based printer.
+
+    Every check above this one probes a Bambu port or credential, so running
+    them against a U1 produces a page of red that says nothing true. These
+    three are what actually decide whether Bambuddy can drive the machine:
+    the API answers, it is a Snapmaker rather than some other Klipper build,
+    and Klipper itself is ready (a printer in shutdown answers HTTP happily
+    and refuses every command).
+
+    Check ids are new and distinct — ``moonraker`` / ``snapmaker_identity`` /
+    ``klipper_ready`` — so the frontend renders their own text rather than
+    Bambu advice under a reused key.
+    """
+    from backend.app.services.snapmaker.moonraker import MoonrakerClient, MoonrakerError
+
+    checks: list[DiagnosticCheck] = []
+    client = MoonrakerClient(ip_address, token=(getattr(printer, "access_code", None) or None), timeout=5.0)
+    try:
+        try:
+            system_info = await client.system_info()
+        except MoonrakerError as exc:
+            checks.append(DiagnosticCheck(id="moonraker", status="fail", params={"error": str(exc)}))
+            checks.append(DiagnosticCheck(id="snapmaker_identity", status="skip"))
+            checks.append(DiagnosticCheck(id="klipper_ready", status="skip"))
+            return PrinterDiagnosticResult(
+                printer_id=getattr(printer, "id", None),
+                ip_address=ip_address,
+                overall="fail",
+                checks=checks,
+            )
+
+        checks.append(DiagnosticCheck(id="moonraker", status="pass"))
+        product_info = system_info.get("product_info") or {}
+        checks.append(
+            DiagnosticCheck(
+                id="snapmaker_identity",
+                # A warning, not a failure: a machine running community
+                # firmware may well work for status and basic control even
+                # when it no longer reports Snapmaker's product_info.
+                status="pass" if product_info else "warn",
+                params={"machine_type": product_info.get("machine_type") or ""},
+            )
+        )
+
+        try:
+            status = await client.query_objects({"webhooks": None})
+            klippy_state = str((status.get("webhooks") or {}).get("state") or "").lower()
+        except MoonrakerError as exc:
+            checks.append(DiagnosticCheck(id="klipper_ready", status="fail", params={"error": str(exc)}))
+        else:
+            checks.append(
+                DiagnosticCheck(
+                    id="klipper_ready",
+                    status="pass" if klippy_state == "ready" else "fail",
+                    params={"state": klippy_state or "unknown"},
+                )
+            )
+    finally:
+        await client.close()
+
+    overall = "fail" if any(check.status == "fail" for check in checks) else "pass"
+    return PrinterDiagnosticResult(
+        printer_id=getattr(printer, "id", None),
+        ip_address=ip_address,
+        overall=overall,
+        checks=checks,
+    )
+
+
 async def run_connection_diagnostic(
     ip_address: str,
     *,
@@ -265,6 +336,9 @@ async def run_connection_diagnostic(
     title and fix text (localized) keyed on that id + status.
     """
     checks: list[DiagnosticCheck] = []
+
+    if is_snapmaker(printer):
+        return await _run_snapmaker_diagnostic(ip_address, printer)
 
     # --- Port reachability (probed in parallel) ---
     camera_port, camera_protocol = _camera_port_for_printer(printer)

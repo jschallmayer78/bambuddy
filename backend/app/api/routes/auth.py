@@ -63,6 +63,7 @@ from backend.app.schemas.auth import (
     UserResponse,
     _validate_password_complexity,
 )
+from backend.app.services import ha_ingress_auth
 from backend.app.services.email_service import (
     create_password_reset_link_email_from_template,
     get_smtp_settings,
@@ -443,6 +444,83 @@ async def disable_auth(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to disable authentication",
         )
+
+
+@router.post("/ha-ingress", response_model=LoginResponse)
+async def ha_ingress_login(raw_request: Request, db: AsyncSession = Depends(get_db)) -> LoginResponse:
+    """Sign in as the Home Assistant user who opened the sidebar panel.
+
+    Public by necessity — it IS the login — but it authenticates nothing by
+    itself: ``services.ha_ingress_auth`` refuses every request that did not
+    come through the Supervisor's ingress, and the add-on has to have turned
+    the feature on. See that module for why each of its four checks exists.
+
+    On success the caller gets exactly what a password login returns, so the
+    frontend stores it the same way and every later request is an ordinary
+    authenticated one.
+    """
+    try:
+        username, display_name = ha_ingress_auth.resolve_identity(raw_request)
+    except ha_ingress_auth.IngressAuthUnavailable as exc:
+        # Logged, not returned: telling a caller which check failed turns this
+        # into a probe for how Bambuddy is deployed.
+        _logger.info("Home Assistant ingress login refused: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Home Assistant sign-in is not available here",
+        ) from exc
+
+    result = await db.execute(select(User).where(User.username == username).options(selectinload(User.groups)))
+    user = result.scalar_one_or_none()
+
+    if user is None:
+        role = ha_ingress_auth.configured_role()
+        user = User(
+            username=username,
+            # No password hash at all, rather than an unusable placeholder:
+            # this account can only ever be reached through ingress, and a
+            # hash — even a random one — is something a password-reset flow
+            # could later latch onto.
+            password_hash=None,
+            role=role,
+            auth_source="ha",
+            is_active=True,
+        )
+        group_name = "Administrators" if role == "admin" else "Operators"
+        group = (await db.execute(select(Group).where(Group.name == group_name))).scalar_one_or_none()
+        if group is not None:
+            user.groups.append(group)
+        db.add(user)
+        await db.commit()
+        result = await db.execute(select(User).where(User.username == username).options(selectinload(User.groups)))
+        user = result.scalar_one()
+        _logger.info("Provisioned Bambuddy account %s for Home Assistant user %s (%s)", username, display_name, role)
+
+    if user.auth_source != "ha":
+        # The namespace prefix makes this all but impossible, but if a local
+        # account ever occupies the name, handing out its token to whoever
+        # holds the Home Assistant session would be a privilege handover.
+        _logger.warning("Refusing ingress login for %s: account is not Home-Assistant-provisioned", username)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Home Assistant sign-in is not available here",
+        )
+
+    if not user.is_active:
+        # An administrator disabled this account in Bambuddy. Home Assistant
+        # does not know that, so the refusal has to happen here.
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account is disabled")
+
+    access_token = create_access_token(
+        data={"sub": user.username},
+        expires_delta=timedelta(minutes=await resolve_session_max_minutes(db)),
+    )
+    return LoginResponse(
+        access_token=access_token,
+        token_type="bearer",
+        user=_user_to_response(user),
+        requires_2fa=False,
+    )
 
 
 @router.post("/login", response_model=LoginResponse)

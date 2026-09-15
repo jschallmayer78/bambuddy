@@ -20,6 +20,7 @@ from backend.app.services.discovery import (
     subnet_scanner,
 )
 from backend.app.services.network_utils import get_network_interfaces
+from backend.app.services.printer_drivers.base import PRINTER_TYPE_BAMBU
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/discovery", tags=["discovery"])
@@ -63,6 +64,9 @@ class DiscoveredPrinterResponse(BaseModel):
     ip_address: str
     model: str | None = None
     discovered_at: str | None = None
+    # Lets the add-printer dialog show the right form for the find. Defaults
+    # to Bambu so a client reading an older response keeps its behaviour.
+    printer_type: str = PRINTER_TYPE_BAMBU
 
 
 @router.get("/info", response_model=DiscoveryInfo)

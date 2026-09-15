@@ -3840,7 +3840,7 @@ async def test_stop_offline_reconciles_linked_archive_status_2603(
     already cancelled — the reporter's archive 436. The offline branch reconciles the
     archive directly.
     """
-    from unittest.mock import MagicMock, patch
+    from unittest.mock import AsyncMock, patch
 
     from backend.app.models.print_queue import PrintQueueItem
 
@@ -3856,7 +3856,7 @@ async def test_stop_offline_reconciles_linked_archive_status_2603(
     # stop_print returns False => printer offline / not connected.
     with patch(
         "backend.app.services.printer_manager.printer_manager.stop_print",
-        MagicMock(return_value=False),
+        AsyncMock(return_value=False),
     ):
         resp = await async_client.post(f"/api/v1/queue/{item.id}/stop")
 
@@ -3875,7 +3875,7 @@ async def test_stop_online_leaves_archive_for_mqtt_to_reconcile_2603(
 ):
     """When the stop command reaches the printer, the archive is left to the MQTT
     completion path — the offline reconcile must NOT fire and pre-empt it."""
-    from unittest.mock import MagicMock, patch
+    from unittest.mock import AsyncMock, patch
 
     from backend.app.models.print_queue import PrintQueueItem
 
@@ -3888,7 +3888,7 @@ async def test_stop_online_leaves_archive_for_mqtt_to_reconcile_2603(
 
     with patch(
         "backend.app.services.printer_manager.printer_manager.stop_print",
-        MagicMock(return_value=True),
+        AsyncMock(return_value=True),
     ):
         resp = await async_client.post(f"/api/v1/queue/{item.id}/stop")
 

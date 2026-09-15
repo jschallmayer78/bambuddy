@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
+import { appPath } from '../utils/basePath';
 import { api } from '../api/client';
 import { useToast } from '../contexts/ToastContext';
 import { useTheme } from '../contexts/ThemeContext';
@@ -79,7 +80,7 @@ export function SetupPage() {
         <div className="text-center">
           <div className="flex items-center justify-center mb-6">
             <img
-              src={mode === 'dark' ? '/img/bambuddy_logo_dark_transparent.png' : '/img/bambuddy_logo_light.png'}
+              src={appPath(mode === 'dark' ? 'img/bambuddy_logo_dark_transparent.png' : 'img/bambuddy_logo_light.png')}
               alt="Bambuddy"
               className="h-16"
             />

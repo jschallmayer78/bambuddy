@@ -221,7 +221,7 @@ describe('StreamOverlayPage', () => {
 
       await waitFor(() => {
         const img = screen.getByAltText('Camera stream') as HTMLImageElement;
-        expect(img.src).toContain('fps=15');
+        expect(img.getAttribute('data-stream-url') || '').toContain('fps=15');
       });
     });
 
@@ -230,7 +230,7 @@ describe('StreamOverlayPage', () => {
 
       await waitFor(() => {
         const img = screen.getByAltText('Camera stream') as HTMLImageElement;
-        expect(img.src).toContain('fps=30');
+        expect(img.getAttribute('data-stream-url') || '').toContain('fps=30');
       });
     });
 
@@ -239,7 +239,7 @@ describe('StreamOverlayPage', () => {
 
       await waitFor(() => {
         const img = screen.getByAltText('Camera stream') as HTMLImageElement;
-        expect(img.src).toContain('fps=30');
+        expect(img.getAttribute('data-stream-url') || '').toContain('fps=30');
       });
     });
 
@@ -248,7 +248,7 @@ describe('StreamOverlayPage', () => {
 
       await waitFor(() => {
         const img = screen.getByAltText('Camera stream') as HTMLImageElement;
-        expect(img.src).toContain('fps=1');
+        expect(img.getAttribute('data-stream-url') || '').toContain('fps=1');
       });
     });
 
@@ -258,7 +258,7 @@ describe('StreamOverlayPage', () => {
       await waitFor(() => {
         const img = screen.getByAltText('Camera stream') as HTMLImageElement;
         // Should fall back to default of 15
-        expect(img.src).toContain('fps=15');
+        expect(img.getAttribute('data-stream-url') || '').toContain('fps=15');
       });
     });
   });
@@ -317,7 +317,7 @@ describe('StreamOverlayPage', () => {
 
       await waitFor(() => {
         const img = screen.getByAltText('Camera stream') as HTMLImageElement;
-        expect(img.src).toContain('fps=25');
+        expect(img.getAttribute('data-stream-url') || '').toContain('fps=25');
       });
     });
 
@@ -342,7 +342,7 @@ describe('StreamOverlayPage', () => {
 
       await waitFor(() => {
         const img = screen.getByAltText('Camera stream') as HTMLImageElement;
-        expect(img.src).toContain('fps=20');
+        expect(img.getAttribute('data-stream-url') || '').toContain('fps=20');
         expect(screen.getByText('45%')).toBeInTheDocument();
       });
     });
@@ -406,7 +406,7 @@ describe('StreamOverlayPage', () => {
       // The camera <img> must carry the same kiosk token — a fresh OBS browser
       // has no session to mint a camera stream token from.
       const img = screen.getByAltText('Camera stream') as HTMLImageElement;
-      expect(img.src).toContain('token=obs-tok');
+      expect(img.getAttribute('data-stream-url') || '').toContain('token=obs-tok');
     });
 
     it('does not touch the JWT-only status endpoint or a WebSocket in kiosk mode', async () => {

@@ -1,6 +1,10 @@
 import type { ArchivePlatesResponse, LibraryFilePlatesResponse } from '../types/plates';
+import { appPath } from '../utils/basePath';
 
-const API_BASE = '/api/v1';
+// Resolved against the app root rather than hard-coded to "/api/v1" so the same
+// build works on its own port and under Home Assistant's per-session ingress
+// prefix. See utils/basePath.ts for the whole contract.
+const API_BASE = appPath('api/v1');
 
 export class ApiError extends Error {
   status: number;
@@ -68,8 +72,24 @@ export function getAuthToken(): string | null {
 // (these can't send Authorization headers, so a query param token is used)
 let streamToken: string | null = null;
 
+// Listeners let a component re-render when the token arrives after it first
+// painted. The <img>-based views used to be patched in place by
+// rewriteMediaSrcWithToken, but a live stream is now read by fetch() from a URL
+// captured at render time, so it needs the token as reactive state instead.
+const streamTokenListeners = new Set<() => void>();
+
 export function setStreamToken(token: string | null) {
+  if (token === streamToken) return;
   streamToken = token;
+  streamTokenListeners.forEach((listener) => listener());
+}
+
+/** Subscribe to stream-token changes. Shaped for ``useSyncExternalStore``. */
+export function subscribeStreamToken(listener: () => void): () => void {
+  streamTokenListeners.add(listener);
+  return () => {
+    streamTokenListeners.delete(listener);
+  };
 }
 
 export function getStreamToken(): string | null {
@@ -246,7 +266,12 @@ export interface DiagnosticCheck {
     | 'network_mode'
     | 'subnet'
     | 'mqtt_auth'
-    | 'developer_mode';
+    | 'developer_mode'
+    // Snapmaker U1: a Moonraker printer has none of the ports or credentials
+    // above, so its diagnostic is its own three checks.
+    | 'moonraker'
+    | 'snapmaker_identity'
+    | 'klipper_ready';
   status: DiagnosticStatus;
   params: Record<string, string | number>;
 }
@@ -254,8 +279,20 @@ export interface DiagnosticCheck {
 export interface PrinterDiagnosticResult {
   printer_id: number | null;
   ip_address: string;
-  overall: 'ok' | 'warnings' | 'problems';
+  // The Snapmaker diagnostic summarises as pass/fail rather than the Bambu
+  // run's three-way ok/warnings/problems; the checklist folds the two pairs
+  // of synonyms together.
+  overall: 'ok' | 'warnings' | 'problems' | 'pass' | 'fail';
   checks: DiagnosticCheck[];
+}
+
+/** Result of the pre-save reachability probe (POST /printers/test). */
+export interface PrinterProbeResult {
+  success: boolean;
+  state?: string | null;
+  model?: string | null;
+  serial?: string | null;
+  reason?: string | null;
 }
 
 // --- Log-health scan: self-service triage on the System page + bug reporter.
@@ -349,10 +386,19 @@ export interface OverlayStatus {
 }
 
 // Printer types
+
+// Which protocol Bambuddy speaks to a printer with. Mirrors PRINTER_TYPES in
+// backend/app/services/printer_drivers/base.py; rows written before
+// multi-protocol support read back as 'bambu'.
+export type PrinterType = 'bambu' | 'snapmaker_u1';
+
 export interface Printer {
   id: number;
   name: string;
   serial_number: string;
+  printer_type: PrinterType;
+  // May carry an explicit port ("192.168.1.9:7125") for a Moonraker that
+  // isn't on the default one.
   ip_address: string;
   // Optional because the backend only returns access_code when the caller has
   // PRINTERS_UPDATE — Admin / Operator JWTs or auth-disabled mode. Viewers and
@@ -659,7 +705,12 @@ export interface PrinterStatus {
 export interface PrinterCreate {
   name: string;
   serial_number: string;
+  // Optional so a caller that predates multi-protocol support still compiles;
+  // the backend normalises a missing value to 'bambu'.
+  printer_type?: PrinterType;
   ip_address: string;
+  // Required for Bambu (it IS the MQTT password), optional elsewhere: a
+  // Snapmaker U1's Moonraker answers unauthenticated on a private LAN.
   access_code: string;
   model?: string;
   location?: string;
@@ -4506,7 +4557,7 @@ export const api = {
   // so a future caller can't accidentally substitute an attacker-
   // controlled URL where this is consumed.
   oidcProviderIconUrl: (id: number): SameOriginUrl =>
-    `/api/v1/auth/oidc/providers/${id}/icon` as SameOriginUrl,
+    `${API_BASE}/auth/oidc/providers/${id}/icon` as SameOriginUrl,
   deleteOIDCProviderIcon: (id: number) =>
     request<void>(`/auth/oidc/providers/${id}/icon`, { method: 'DELETE' }),
   refreshOIDCProviderIcon: (id: number) =>
@@ -6833,6 +6884,21 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(body),
     }),
+  // Protocol-agnostic reachability probe, routed by printer_type. The
+  // diagnostic above only knows Bambu's ports, so it is not an answer for a
+  // printer that doesn't have them — this asks that printer's own driver.
+  testConnection: (params: {
+    ip_address: string;
+    serial_number?: string;
+    access_code?: string;
+    printer_type?: PrinterType;
+  }) => {
+    const query = new URLSearchParams({ ip_address: params.ip_address });
+    if (params.serial_number) query.set('serial_number', params.serial_number);
+    if (params.access_code) query.set('access_code', params.access_code);
+    if (params.printer_type) query.set('printer_type', params.printer_type);
+    return request<PrinterProbeResult>(`/printers/test?${query.toString()}`, { method: 'POST' });
+  },
 
   // Plate Detection - Multi-reference calibration (stores up to 5 references per printer)
   checkPlateEmpty: (printerId: number, options?: { useExternal?: boolean; includeDebugImage?: boolean }) => {
@@ -8183,6 +8249,7 @@ export interface DiscoveredPrinter {
   ip_address: string;
   model: string | null;
   discovered_at: string | null;
+  printer_type: PrinterType;
 }
 
 export interface DiscoveryStatus {

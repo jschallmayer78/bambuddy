@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useQuery, useQueries } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
+import { appPath } from '../../utils/basePath';
 import { WifiOff } from 'lucide-react';
 import { api, type Printer } from '../../api/client';
 import { formatTimeOnly } from '../../utils/date';
@@ -56,7 +57,7 @@ export function SpoolBuddyTopBar({ selectedPrinterId, onPrinterChange, deviceOnl
     <div className="h-12 bg-bambu-dark-secondary border-b border-bambu-dark-tertiary flex items-center px-3 gap-4 shrink-0">
       {/* Logo */}
       <div className="flex items-center shrink-0">
-        <img src="/img/spoolbuddy_logo_dark_small.png" alt="SpoolBuddy" width={113} height={28} className="h-7 w-auto" />
+        <img src={appPath('img/spoolbuddy_logo_dark_small.png')} alt="SpoolBuddy" width={113} height={28} className="h-7 w-auto" />
       </div>
 
       {/* Printer selector - centered */}

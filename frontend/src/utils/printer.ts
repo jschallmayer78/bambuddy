@@ -1,21 +1,28 @@
+import { appPath } from './basePath';
+
 export function getPrinterImage(model: string | null | undefined): string {
-  if (!model) return '/img/printers/default.png';
+  if (!model) return appPath('img/printers/default.png');
   const m = model.toLowerCase().replace(/\s+/g, '');
-  if (m.includes('x1e')) return '/img/printers/x1e.png';
-  if (m.includes('x1c') || m.includes('x1carbon')) return '/img/printers/x1c.png';
-  if (m.includes('x1')) return '/img/printers/x1c.png';
-  if (m.includes('x2d') || m === 'n6') return '/img/printers/x2d.png';
-  if (m.includes('h2dpro') || m.includes('h2d-pro')) return '/img/printers/h2dpro.png';
-  if (m.includes('h2d')) return '/img/printers/h2d.png';
-  if (m.includes('h2c')) return '/img/printers/h2c.png';
-  if (m.includes('h2s')) return '/img/printers/h2d.png';
-  if (m.includes('p2s')) return '/img/printers/p1s.png';
-  if (m.includes('p1s')) return '/img/printers/p1s.png';
-  if (m.includes('p1p')) return '/img/printers/p1p.png';
-  if (m.includes('a2l') || m === 'n9') return '/img/printers/a2l.png';
-  if (m.includes('a1mini')) return '/img/printers/a1mini.png';
-  if (m.includes('a1')) return '/img/printers/a1.png';
-  return '/img/printers/default.png';
+  // Snapmaker U1. Bambuddy ships no U1 artwork and inventing one (or reusing a
+  // Bambu model's) would mislabel the machine on its own card, so it takes the
+  // generic silhouette. Matched before the Bambu table so a future "…u1…" model
+  // code can't fall into one of those substring checks.
+  if (m.includes('u1') || m.includes('snapmaker')) return appPath('img/printers/default.png');
+  if (m.includes('x1e')) return appPath('img/printers/x1e.png');
+  if (m.includes('x1c') || m.includes('x1carbon')) return appPath('img/printers/x1c.png');
+  if (m.includes('x1')) return appPath('img/printers/x1c.png');
+  if (m.includes('x2d') || m === 'n6') return appPath('img/printers/x2d.png');
+  if (m.includes('h2dpro') || m.includes('h2d-pro')) return appPath('img/printers/h2dpro.png');
+  if (m.includes('h2d')) return appPath('img/printers/h2d.png');
+  if (m.includes('h2c')) return appPath('img/printers/h2c.png');
+  if (m.includes('h2s')) return appPath('img/printers/h2d.png');
+  if (m.includes('p2s')) return appPath('img/printers/p1s.png');
+  if (m.includes('p1s')) return appPath('img/printers/p1s.png');
+  if (m.includes('p1p')) return appPath('img/printers/p1p.png');
+  if (m.includes('a2l') || m === 'n9') return appPath('img/printers/a2l.png');
+  if (m.includes('a1mini')) return appPath('img/printers/a1mini.png');
+  if (m.includes('a1')) return appPath('img/printers/a1.png');
+  return appPath('img/printers/default.png');
 }
 
 // Ceiling for every chamber-temperature target the UI accepts (manual set,

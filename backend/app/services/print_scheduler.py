@@ -28,7 +28,7 @@ from backend.app.models.settings import Settings
 from backend.app.models.smart_plug import SmartPlug
 from backend.app.models.spool_assignment import SpoolAssignment
 from backend.app.models.spoolman_slot_assignment import SpoolmanSlotAssignment
-from backend.app.services import drying_preflight, print_dispatch_context
+from backend.app.services import drying_preflight, print_dispatch_context, printer_files
 from backend.app.services.bambu_ftp import (
     FtpFailureReport,
     UploadCancelled,
@@ -49,6 +49,7 @@ from backend.app.services.finance_budget import (
 from backend.app.services.ha_sensor_manager import ha_sensor_manager
 from backend.app.services.notification_service import notification_service
 from backend.app.services.print_cost_estimate import estimate_queue_source_cost
+from backend.app.services.printer_drivers.base import dispatch_driver
 from backend.app.services.printer_manager import (
     printer_manager,
     supports_airduct,
@@ -2034,17 +2035,17 @@ class PrintScheduler:
                 )
             else:
                 try:
-                    client.set_bed_temperature(0)
+                    dispatch_driver(client, "set_bed_temperature", 0)
                 except Exception as exc:
                     logger.warning("Dispatch item %s: rollback bed → 0 failed: %s", item_id, exc)
         if "chamber" in pin:
             try:
-                client.set_chamber_temperature(0)
+                dispatch_driver(client, "set_chamber_temperature", 0)
             except Exception as exc:
                 logger.warning("Dispatch item %s: rollback chamber → 0 failed: %s", item_id, exc)
         if "airduct" in pin:
             try:
-                client.set_airduct_mode("cooling")
+                dispatch_driver(client, "set_airduct_mode", "cooling")
             except Exception as exc:
                 logger.warning("Dispatch item %s: rollback airduct → cooling failed: %s", item_id, exc)
         logger.info(
@@ -4708,7 +4709,7 @@ class PrintScheduler:
             self._keep_warm.pop(pid, None)
             return
         try:
-            client.set_bed_temperature(0)
+            dispatch_driver(client, "set_bed_temperature", 0)
             logger.info("Queue: keep-warm released for printer %d (bed → 0)", pid)
             self._keep_warm.pop(pid, None)
         except Exception as exc:
@@ -4881,7 +4882,7 @@ class PrintScheduler:
                 cur_bed_target = float((state.temperatures or {}).get("bed_target", 0) or 0)
                 if int(cur_bed_target) == entry.held_target:
                     try:
-                        client.set_bed_temperature(0)
+                        dispatch_driver(client, "set_bed_temperature", 0)
                     except Exception as exc:
                         logger.warning(
                             "Queue: keep-warm timeout bed-off failed for printer %d: %s",
@@ -4904,7 +4905,7 @@ class PrintScheduler:
                 entry.held_target = bed_target
                 continue
             try:
-                client.set_bed_temperature(bed_target)
+                dispatch_driver(client, "set_bed_temperature", bed_target)
                 entry.held_target = bed_target
                 logger.info(
                     "Queue: keeping bed warm at %d°C for printer %d (FINISH, next item needs chamber heat)",
@@ -5217,7 +5218,7 @@ class PrintScheduler:
                         # unwinds them on any non-success exit.
                         pin = self._preheat_pin.setdefault(printer.id, set())
                         try:
-                            client.set_bed_temperature(bed_target)
+                            dispatch_driver(client, "set_bed_temperature", bed_target)
                             pin.add("bed")
                             self._preheat_pin_bed[printer.id] = bed_target
                         except Exception as exc:
@@ -5226,7 +5227,7 @@ class PrintScheduler:
                             cur_airduct = getattr(cur, "airduct_mode", None)
                             if cur_airduct != _AIRDUCT_MODE_HEATING:
                                 try:
-                                    client.set_airduct_mode("heating")
+                                    dispatch_driver(client, "set_airduct_mode", "heating")
                                     # Only undo what we can see we replaced. `None`
                                     # means no mode has been observed yet, and
                                     # rolling that back to cooling would assert a
@@ -5237,7 +5238,7 @@ class PrintScheduler:
                                     logger.warning("Queue item %s: fast-path airduct failed: %s", item.id, exc)
                         if has_heater:
                             try:
-                                client.set_chamber_temperature(chamber_target)
+                                dispatch_driver(client, "set_chamber_temperature", chamber_target)
                                 pin.add("chamber")
                             except Exception as exc:
                                 logger.warning("Queue item %s: fast-path chamber M141 failed: %s", item.id, exc)
@@ -5269,7 +5270,7 @@ class PrintScheduler:
         # cache the target locally so the polling reads below see consistent
         # state (firmware MQTT echoes lag by ~1s).
         try:
-            client.set_bed_temperature(bed_target)
+            dispatch_driver(client, "set_bed_temperature", bed_target)
             pin.add("bed")
             self._preheat_pin_bed[printer.id] = bed_target
         except Exception as exc:
@@ -5294,7 +5295,7 @@ class PrintScheduler:
             current_airduct = getattr(current_state, "airduct_mode", None) if current_state else None
             if current_airduct != desired_id:
                 try:
-                    client.set_airduct_mode(desired_airduct)
+                    dispatch_driver(client, "set_airduct_mode", desired_airduct)
                     # As in the fast path: only pin a rollback for a flap we
                     # saw in cooling. `current_airduct` of None means no mode
                     # has been observed, so there is nothing to restore to.
@@ -5310,7 +5311,7 @@ class PrintScheduler:
 
         if do_chamber and has_heater:
             try:
-                client.set_chamber_temperature(chamber_target)
+                dispatch_driver(client, "set_chamber_temperature", chamber_target)
                 pin.add("chamber")
             except Exception as exc:
                 logger.warning("Queue item %s: preheat chamber M141 failed: %s", item.id, exc)
@@ -6281,7 +6282,17 @@ class PrintScheduler:
         upload_failure = FtpFailureReport()
 
         try:
-            if ftp_retry_enabled:
+            if printer_files.is_snapmaker(printer):
+                # Moonraker upload. No FTPS retry policy applies — there is no
+                # implicit-TLS handshake to fail, and a failed HTTP POST is
+                # reported with a reason the user can act on.
+                uploaded = await printer_files.upload_file(
+                    printer,
+                    file_path,
+                    remote_filename,
+                    progress_callback=progress_bridge,
+                )
+            elif ftp_retry_enabled:
                 uploaded = await with_ftp_retry(
                     upload_file_async,
                     printer.ip_address,
@@ -6318,7 +6329,12 @@ class PrintScheduler:
             logger.error("Queue item %s: upload deadline exceeded: %s", item.id, e)
         except Exception as e:
             uploaded = False
-            logger.error("Queue item %s: FTP error: %s (type: %s)", item.id, e, type(e).__name__)
+            logger.error("Queue item %s: upload error: %s (type: %s)", item.id, e, type(e).__name__)
+            if printer_files.is_snapmaker(printer):
+                # The Moonraker path's failures are already user-facing
+                # sentences ("... is not a G-code file"); the FTPS advice below
+                # would be nonsense for them.
+                upload_error = str(e)
 
         # Clean up injected temp file after upload attempt
         if injected_path and injected_path.exists():
@@ -6638,7 +6654,7 @@ class PrintScheduler:
         # parses + injects it only for dual-nozzle models so a null on every
         # other model is a transparent pass-through. The rack fallback is
         # resolved down there too, where the live rack position is known.
-        started = printer_manager.start_print(
+        started = await printer_manager.start_print(
             item.printer_id,
             remote_filename,
             plate_id=item.plate_id or 1,

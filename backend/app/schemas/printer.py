@@ -2,6 +2,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from backend.app.services.printer_drivers.base import PRINTER_TYPE_BAMBU, normalize_printer_type
 from backend.app.utils.printer_models import supports_nozzle_flow_type
 
 
@@ -26,10 +27,20 @@ class PrinterBase(BaseModel):
             raise ValueError("serial_number must not be blank")
         return normalized
 
+    # Which protocol Bambuddy speaks to this printer with. Absent on every
+    # request made before multi-protocol support and on every existing row, so
+    # it is optional and normalised to "bambu" rather than required.
+    printer_type: str = Field(default=PRINTER_TYPE_BAMBU)
+
+    @field_validator("printer_type", mode="before")
+    @classmethod
+    def _normalize_printer_type(cls, v):
+        return normalize_printer_type(v)
+
     ip_address: str = Field(
         ...,
         max_length=253,
-        pattern=r"^(\d{1,3}(\.\d{1,3}){3}|[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*)$",
+        pattern=r"^(\d{1,3}(\.\d{1,3}){3}|[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*)(:\d{1,5})?$",
     )
     model: str | None = None
     location: str | None = None  # Group/location name
@@ -45,7 +56,18 @@ class PrinterCreate(PrinterBase):
     # access_code lives on the input shapes only — never on the default
     # PrinterResponse. Direct exposure on PRINTERS_READ would let a Viewer
     # connect to the printer's MQTT and bypass Bambuddy's RBAC.
-    access_code: str = Field(..., min_length=1, max_length=20)
+    #
+    # Required for Bambu (it IS the MQTT password), optional elsewhere: a
+    # Snapmaker U1 serves Moonraker unauthenticated on a private LAN, and
+    # demanding a code there would mean inventing one. The field then carries
+    # an optional Moonraker API token for installations that configured one.
+    access_code: str = Field(default="", max_length=64)
+
+    @model_validator(mode="after")
+    def _require_access_code_for_bambu(self):
+        if self.printer_type == PRINTER_TYPE_BAMBU and not (self.access_code or "").strip():
+            raise ValueError("access_code is required for Bambu Lab printers")
+        return self
 
 
 class PlateDetectionROI(BaseModel):
@@ -59,10 +81,11 @@ class PlateDetectionROI(BaseModel):
 
 class PrinterUpdate(BaseModel):
     name: str | None = None
+    printer_type: str | None = None
     ip_address: str | None = Field(
         default=None,
         max_length=253,
-        pattern=r"^(\d{1,3}(\.\d{1,3}){3}|[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*)$",
+        pattern=r"^(\d{1,3}(\.\d{1,3}){3}|[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*)(:\d{1,5})?$",
     )
     access_code: str | None = None
     model: str | None = None
@@ -109,6 +132,7 @@ class PrinterResponse(PrinterBase):
             "id": printer.id,
             "name": printer.name,
             "serial_number": printer.serial_number,
+            "printer_type": normalize_printer_type(getattr(printer, "printer_type", None)),
             "ip_address": printer.ip_address,
             "model": printer.model,
             "location": printer.location,

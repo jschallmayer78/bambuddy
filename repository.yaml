@@ -1,0 +1,8 @@
+# Home Assistant add-on repository descriptor.
+#
+# Its presence at the repo root is what lets someone paste this repository's
+# URL into Settings → Add-ons → Add-on Store → Repositories and have the
+# Supervisor find `ha-addon/bambuddy`.
+name: Bambuddy
+url: https://github.com/maziggy/bambuddy
+maintainer: Bambuddy contributors

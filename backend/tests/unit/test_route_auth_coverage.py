@@ -70,6 +70,10 @@ _PUBLIC_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("GET", "/api/v1/auth/oidc/authorize/{provider_id}"),
         ("GET", "/api/v1/auth/oidc/callback"),
         ("POST", "/api/v1/auth/oidc/exchange"),
+        # Home Assistant ingress sign-in — the Supervisor's own headers ARE the
+        # auth, and the handler refuses anything that did not arrive through
+        # ingress from the Supervisor's network (services/ha_ingress_auth.py).
+        ("POST", "/api/v1/auth/ha-ingress"),
         # 2FA send + verify — issued after password check; pre-auth token in cookie is the auth.
         ("POST", "/api/v1/auth/2fa/email/send"),
         ("POST", "/api/v1/auth/2fa/verify"),

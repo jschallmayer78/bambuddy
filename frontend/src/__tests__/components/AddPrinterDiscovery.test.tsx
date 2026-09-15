@@ -192,4 +192,49 @@ describe('AddPrinterModal Discovery', () => {
     // still reads "Discover Printers on Network", not "Scan Subnet".
     expect(screen.getByText(/discover printers/i)).toBeInTheDocument();
   });
+
+  it('preselects Snapmaker U1 when a discovered U1 is picked', async () => {
+    server.use(
+      http.get('/api/v1/discovery/info', () =>
+        HttpResponse.json({
+          is_docker: true,
+          ssdp_running: false,
+          scan_running: false,
+          subnets: ['192.168.1.0/24'],
+        }),
+      ),
+      http.post('/api/v1/discovery/scan', () =>
+        HttpResponse.json({ running: false, scanned: 254, total: 254 }),
+      ),
+      http.get('/api/v1/discovery/scan/status', () =>
+        HttpResponse.json({ running: false, scanned: 254, total: 254 }),
+      ),
+      http.get('/api/v1/discovery/printers', () =>
+        HttpResponse.json([
+          {
+            serial: 'SNPU1-0001',
+            name: 'Workshop U1',
+            ip_address: '192.168.1.9',
+            model: 'U1',
+            discovered_at: null,
+            printer_type: 'snapmaker_u1',
+          },
+        ]),
+      ),
+    );
+
+    render(<PrintersPage />);
+    await waitFor(() => expect(screen.getByText('X1 Carbon')).toBeInTheDocument());
+    await userEvent.click(screen.getByText(/add printer/i));
+    await userEvent.click(await screen.findByText(/scan subnet/i));
+
+    // Picking the find fills the form — including the type, so the U1 form
+    // (optional serial, no access code) is what the user gets.
+    await userEvent.click(await screen.findByText('Workshop U1'));
+    const typeSelect = (await screen.findByLabelText(/printer type/i)) as HTMLSelectElement;
+    expect(typeSelect.value).toBe('snapmaker_u1');
+    expect((screen.getByPlaceholderText('192.168.1.100 or printer.local') as HTMLInputElement).value).toBe(
+      '192.168.1.9',
+    );
+  });
 });

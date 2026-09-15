@@ -2281,7 +2281,7 @@ async def stop_queue_item(
     # Try to send stop command to printer
     stop_sent = False
     try:
-        stop_sent = printer_manager.stop_print(printer_id)
+        stop_sent = await printer_manager.stop_print(printer_id)
         if not stop_sent:
             logger.warning("stop_print returned False for printer %s - printer may not be connected", printer_id)
     except Exception as e:

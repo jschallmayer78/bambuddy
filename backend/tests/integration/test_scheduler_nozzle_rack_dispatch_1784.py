@@ -124,7 +124,7 @@ async def rack_case(tmp_path):
 async def _dispatch(ctx, ids, rack_slots):
     """Run one dispatch, returning the mocked ``start_print`` and the delete."""
     scheduler = PrintScheduler()
-    start_print = MagicMock(return_value=True)
+    start_print = AsyncMock(return_value=True)
     delete_file = AsyncMock(return_value=True)
     status = SimpleNamespace(state="IDLE", nozzle_rack=rack_slots)
 

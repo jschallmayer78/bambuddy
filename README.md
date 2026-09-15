@@ -689,6 +689,20 @@ Open **http://localhost:8000** and add your printer!
 
 > **Need detailed instructions?** See the [Installation Guide](http://wiki.bambuddy.cool/getting-started/installation/)
 
+### Home Assistant add-on
+
+Bambuddy can run as a Home Assistant add-on and appear in Home Assistant's
+sidebar, signed in with the Home Assistant account that opened it.
+
+1. Settings → Add-ons → Add-on Store → ⋮ → **Repositories**
+2. Add `https://github.com/maziggy/bambuddy`
+3. Install **Bambuddy**, then **Start**.
+
+The add-on runs on the host network — printer discovery, MQTT, FTPS and the
+virtual printer all need it — so Bambuddy is also reachable directly on its own
+port, outside Home Assistant's access control. See
+[ha-addon/README.md](ha-addon/README.md) for the options and what that implies.
+
 ### Windows Native Installation
 
 Windows PowerShell (run as Administrator — the installer self-elevates via UAC if not):
@@ -735,6 +749,8 @@ Full documentation available at **[wiki.bambuddy.cool](http://wiki.bambuddy.cool
 
 ## 🖨️ Supported Printers
 
+### Bambu Lab
+
 | Series | Models |
 |--------|--------|
 | X1 | X1, X1 Carbon, X1E |
@@ -744,6 +760,17 @@ Full documentation available at **[wiki.bambuddy.cool](http://wiki.bambuddy.cool
 | P2 | P2S |
 | A1 | A1, A1 Mini |
 | A2 | A2L |
+
+### Snapmaker
+
+| Series | Models |
+|--------|--------|
+| U1 | U1 |
+
+The U1 speaks Klipper/Moonraker rather than Bambu's MQTT, so it is added with
+a printer type of **Snapmaker U1** and needs no access code. See
+[docs/snapmaker-u1.md](docs/snapmaker-u1.md) for what is supported, what is
+not, and why.
 
 ---
 

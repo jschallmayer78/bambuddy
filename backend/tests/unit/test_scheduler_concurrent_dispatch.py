@@ -174,7 +174,7 @@ async def _scheduler_ctx(ctx, upload, job_started=None):
         patch("backend.app.core.database.async_session", ctx.session_maker),
         patch("backend.app.services.print_scheduler.printer_manager.is_connected", MagicMock(return_value=True)),
         patch("backend.app.services.print_scheduler.printer_manager.get_status", MagicMock(return_value=None)),
-        patch("backend.app.services.print_scheduler.printer_manager.start_print", MagicMock(return_value=True)),
+        patch("backend.app.services.print_scheduler.printer_manager.start_print", AsyncMock(return_value=True)),
         patch("backend.app.services.print_scheduler.printer_manager.set_awaiting_plate_clear", MagicMock()),
         patch("backend.app.services.print_scheduler.upload_file_async", upload),
         patch("backend.app.services.print_scheduler.delete_file_async", AsyncMock(return_value=True)),

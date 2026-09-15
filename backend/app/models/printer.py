@@ -12,8 +12,17 @@ class Printer(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(100))
     serial_number: Mapped[str] = mapped_column(String(50), unique=True)
+    # Which protocol this printer speaks — see services/printer_drivers.
+    # NULL on every row written before the column existed, and those rows are
+    # all Bambu machines, so NULL is read as "bambu" rather than defaulted in
+    # place: a backfill would have to be repeated for every restored backup.
+    printer_type: Mapped[str | None] = mapped_column(String(32), nullable=True, default="bambu")
     ip_address: Mapped[str] = mapped_column(String(253))
-    access_code: Mapped[str] = mapped_column(String(20))
+    # Bambu LAN access code, or an optional Moonraker API token on printers
+    # that speak HTTP. Stays NOT NULL — the column predates multi-protocol
+    # support and existing databases enforce it — so a printer that needs no
+    # credential (a Snapmaker U1 on a private LAN) stores an empty string.
+    access_code: Mapped[str] = mapped_column(String(64), default="")
     model: Mapped[str | None] = mapped_column(String(50))
     location: Mapped[str | None] = mapped_column(String(100))  # Group/location name
     nozzle_count: Mapped[int] = mapped_column(default=1)  # 1 or 2, auto-detected from MQTT

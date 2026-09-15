@@ -326,7 +326,7 @@ async def archive_case(tmp_path):
                 archive_abs=archive_abs,
                 printer_id=printer.id,
                 queue_item_id=item.id,
-                start_print=MagicMock(return_value=True),
+                start_print=AsyncMock(return_value=True),
                 upload=AsyncMock(return_value=True),
             )
 

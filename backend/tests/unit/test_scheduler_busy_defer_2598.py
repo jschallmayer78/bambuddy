@@ -106,7 +106,7 @@ async def test_pre_dispatch_busy_defers_without_upload(dispatch_case):
     """Printer already RUNNING when _start_print begins → defer, no upload/start."""
     scheduler = PrintScheduler()
     upload = AsyncMock(return_value=True)
-    start_print = MagicMock(return_value=True)
+    start_print = AsyncMock(return_value=True)
     get_status = MagicMock(return_value=SimpleNamespace(state="RUNNING", subtask_id=None, gcode_file=None))
 
     async with dispatch_case.session_maker() as db:
@@ -143,7 +143,7 @@ async def test_post_dispatch_busy_reverts_to_pending_not_failed(dispatch_case):
         holder["state"] = "RUNNING"
         return False  # start_print() refused: busy
 
-    start_print = MagicMock(side_effect=_start_print)
+    start_print = AsyncMock(side_effect=_start_print)
     get_status = MagicMock(return_value=_Status())
 
     async with dispatch_case.session_maker() as db:

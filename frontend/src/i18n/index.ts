@@ -1,6 +1,7 @@
 import i18n from 'i18next';
 import { initReactI18next } from 'react-i18next';
 import LanguageDetector from 'i18next-browser-languagedetector';
+import { appPath } from '../utils/basePath';
 
 // Import translations directly for bundling
 import en from './locales/en';
@@ -82,7 +83,7 @@ function applyApplianceLocale() {
   if (typeof storage.getItem !== 'function' || typeof storage.setItem !== 'function') return;
   if (storage.getItem(APPLIANCE_CONSUMED_KEY)) return;
 
-  fetch('/api/v1/system/appliance')
+  fetch(appPath('api/v1/system/appliance'))
     .then((r) => (r.ok ? r.json() : null))
     .then((data) => {
       if (!data || typeof data.locale !== 'string') return;
