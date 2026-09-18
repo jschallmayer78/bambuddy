@@ -86,6 +86,19 @@ this reason and its player falls back to it — if you see this, the frontend
 build is older than the backend. Reinstall the add-on so both are rebuilt
 together.
 
+**The camera updates about once a second in the Companion app, or behind a
+reverse proxy.** That is the fallback working as intended, not a fault. Bambuddy
+reads the MJPEG stream itself (see the note above), which needs the response
+body to arrive piece by piece. The web view iOS renders the panel in buffers a
+response that never ends, and a reverse proxy with response buffering switched
+on does the same — in both cases not one chunk arrives. After six seconds
+without a frame Bambuddy drops the stream and polls the single-image endpoint
+instead, which is an ordinary request that works everywhere. The picture is
+live, just at roughly one frame a second. If you would rather have the smooth
+feed on your phone, turn response buffering off for the Home Assistant host in
+your proxy (`proxy_buffering off;` in nginx); the iOS web view cannot be talked
+out of it.
+
 **Printers are not discovered.** Discovery is SSDP multicast, which needs the
 host network. Check that the add-on's `host_network` is still true and that
 Home Assistant itself is on the same subnet as the printers.

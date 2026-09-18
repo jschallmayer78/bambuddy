@@ -4,7 +4,7 @@
 # only touches the packaging (an option, a doc, a Dockerfile fix) can still be
 # offered as an update without pretending the application changed.
 name: Bambuddy
-version: "1.2.6b1-1"
+version: "1.2.6b1-2"
 slug: bambuddy
 description: Archive, monitor and control your 3D printers from Home Assistant
 url: https://github.com/maziggy/bambuddy

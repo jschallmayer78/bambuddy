@@ -643,6 +643,9 @@ export function CameraPage() {
   // behind HA ingress). Snapshot mode is an ordinary image request, unchanged.
   const frameUrl = useMjpegStream(streamMode === 'stream' ? currentUrl || null : null, {
     onError: handleStreamError,
+    // The page's own snapshot mode is a user choice; this is the automatic
+    // one, for a client that cannot read a stream at all.
+    snapshotUrl: appendToken(appPath(`api/v1/printers/${id}/camera/snapshot`)),
   });
   const imageSrc = streamMode === 'stream' ? frameUrl : currentUrl;
 

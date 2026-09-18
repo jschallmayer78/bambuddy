@@ -143,6 +143,10 @@ export function CameraTile({
   const isLive = mode === 'live' && connected && !errored;
   const liveFrameUrl = useMjpegStream(isLive ? liveUrl : null, {
     onError: () => setErrored(true),
+    // The tile already knows how to fetch a still; handing that URL over means
+    // a client that cannot stream (iOS' WKWebView, a buffering proxy) shows a
+    // slow picture instead of a black rectangle.
+    snapshotUrl,
   });
   const imageSrc = mode === 'live' ? liveFrameUrl : snapshotUrl;
 

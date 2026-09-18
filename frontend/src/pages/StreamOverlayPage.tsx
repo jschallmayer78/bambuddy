@@ -297,12 +297,20 @@ export function StreamOverlayPage() {
   const streamUrl = kiosk && token
     ? `${camPath}&token=${encodeURIComponent(token)}`
     : withStreamToken(camPath);
+  const snapPath = appPath(`api/v1/printers/${id}/camera/snapshot`);
+  const snapshotUrl = kiosk && token
+    ? `${snapPath}?token=${encodeURIComponent(token)}`
+    : withStreamToken(snapPath);
 
   // Read the MJPEG stream ourselves and paint blob frames — see
   // utils/mjpegPlayer.ts. Sits above the `if (!id)` bail-out below because
   // hooks cannot be called conditionally.
   const frameUrl = useMjpegStream(id > 0 && config.showCamera ? streamUrl : null, {
     onError: handleStreamError,
+    // An overlay is usually captured by streaming software rather than viewed
+    // in a WebView, but a buffering proxy in front of Bambuddy affects it the
+    // same way — and a frozen overlay on a livestream is worse than a slow one.
+    snapshotUrl,
   });
 
   if (!id) {
