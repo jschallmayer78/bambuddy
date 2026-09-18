@@ -567,8 +567,12 @@ export function EmbeddedCameraViewer({ printerId, printerName, viewerIndex = 0, 
   // Frames come in as blob URLs rather than from the <img>'s own request; see
   // utils/mjpegPlayer.ts for why that is required behind HA ingress. Parked
   // while minimized so the backend can drop the upstream camera.
+  const snapshotUrl = withStreamToken(appPath(`api/v1/printers/${printerId}/camera/snapshot?t=${imageKey}`));
+
   const frameUrl = useMjpegStream(isMinimized ? null : streamUrl, {
     onError: handleStreamError,
+    // Still-image fallback for clients that never deliver a streamed frame.
+    snapshotUrl,
   });
 
   return (
