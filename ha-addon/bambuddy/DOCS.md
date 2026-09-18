@@ -73,6 +73,20 @@ ref named by the `BAMBUDDY_REF` build argument in its `Dockerfile`. Changing
 that argument (to a tag, a branch, or a fork) and reinstalling is how you move
 to a different version.
 
+An update is offered when the `version` in `config.yaml` changes, so a change
+that only moves the branch forward needs that version bumped too — otherwise
+Home Assistant has nothing to offer. The build picks the branch head up by
+itself: it fetches the branch's commit feed first, which is what stops Docker
+reusing the source layer it cached during the previous build.
+
+The add-on log says which commit it is actually running, on the second line:
+
+    Bambuddy built from commit fd467728fa72c246260899bb1305b53219349621
+
+Compare that against the branch when an update seems not to have changed
+anything. If they differ, the image was built from older source and the
+`BAMBUDDY_HEAD_URL` argument no longer matches the repository and ref above it.
+
 ## Troubleshooting
 
 **The panel is blank, or assets fail to load.** Restart the add-on and reload
@@ -84,7 +98,8 @@ is the ingress proxy dropping the multipart boundary from the response's
 content type. Bambuddy sends the boundary in a separate header for exactly
 this reason and its player falls back to it — if you see this, the frontend
 build is older than the backend. Reinstall the add-on so both are rebuilt
-together.
+together, and check the commit in the log (see *Updating*) to be sure the
+rebuild actually picked the new source up.
 
 **The camera updates about once a second in the Companion app, or behind a
 reverse proxy.** That is the fallback working as intended, not a fault. Bambuddy
