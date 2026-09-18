@@ -265,6 +265,64 @@ describe('useMjpegStream falling back to snapshots', () => {
     act(() => unmount());
   });
 
+  it('reports a camera that cannot produce a still either', async () => {
+    // The tile has nothing to show here whatever happens, so the only question
+    // is whether anyone is told why. It used to be nobody.
+    const onError = vi.fn();
+    fetchStub((url) => {
+      if (url.startsWith(SNAPSHOT)) return new Response('no camera', { status: 503 });
+      return new Response(silentStream(), {
+        status: 200,
+        headers: { 'Content-Type': `multipart/x-mixed-replace; boundary=${BOUNDARY}` },
+      });
+    });
+
+    const { unmount } = renderHook(() =>
+      useMjpegStream(STREAM, {
+        snapshotUrl: SNAPSHOT,
+        firstFrameTimeoutMs: 20,
+        fallbackIntervalMs: 10,
+        onError,
+      }),
+    );
+
+    await waitFor(() => expect(onError).toHaveBeenCalled(), { timeout: 3000 });
+    expect(String(onError.mock.calls[0][0])).toContain('503');
+    act(() => unmount());
+  });
+
+  it('does not report a single failed grab', async () => {
+    // A camera waking up answers one 503 and then works; calling that a broken
+    // camera would put an error on a tile that is about to show a picture.
+    const onError = vi.fn();
+    let snapshots = 0;
+    fetchStub((url) => {
+      if (url.startsWith(SNAPSHOT)) {
+        snapshots += 1;
+        return snapshots === 1
+          ? new Response('warming up', { status: 503 })
+          : snapshotResponse();
+      }
+      return new Response(silentStream(), {
+        status: 200,
+        headers: { 'Content-Type': `multipart/x-mixed-replace; boundary=${BOUNDARY}` },
+      });
+    });
+
+    const { result, unmount } = renderHook(() =>
+      useMjpegStream(STREAM, {
+        snapshotUrl: SNAPSHOT,
+        firstFrameTimeoutMs: 20,
+        fallbackIntervalMs: 10,
+        onError,
+      }),
+    );
+
+    await waitFor(() => expect(result.current).toMatch(/^blob:/), { timeout: 3000 });
+    expect(onError).not.toHaveBeenCalled();
+    act(() => unmount());
+  });
+
   it('stops polling when the view goes away', async () => {
     let snapshots = 0;
     fetchStub((url) => {

@@ -5,6 +5,8 @@ import { playMjpegStream } from '../utils/mjpegPlayer';
 const FIRST_FRAME_TIMEOUT_MS = 6000;
 /** Poll interval once fallen back. Roughly one frame a second is plenty for a tile. */
 const FALLBACK_INTERVAL_MS = 1000;
+/** Consecutive failed polls before the caller is told the camera is broken. */
+const FALLBACK_FAILURES_BEFORE_ERROR = 3;
 
 /**
  * Render an MJPEG camera stream into an ``<img>`` one blob frame at a time,
@@ -104,6 +106,7 @@ export function useMjpegStream(
     let displayed: string | null = null;
     let previous: string | null = null;
     let frames = 0;
+    let failures = 0;
     let stopped = false;
     let pollTimer: ReturnType<typeof setTimeout> | null = null;
     let firstFrameTimer: ReturnType<typeof setTimeout> | null = null;
@@ -137,7 +140,24 @@ export function useMjpegStream(
             signal: pollController.signal,
             credentials: 'same-origin',
           });
-          if (response.ok) show(await response.blob());
+          if (response.ok) {
+            failures = 0;
+            show(await response.blob());
+          } else {
+            // A camera that cannot produce a still answers 503 here, every
+            // second, and dropping that on the floor is how this path used to
+            // fail: an empty tile, no error, nothing in the console to say the
+            // fallback had even engaged. Report the first one, then let the
+            // caller show its own error state once it is clearly not a blip —
+            // a single failed grab while the printer wakes its camera is.
+            failures += 1;
+            if (failures === 1) {
+              console.warn(`camera: snapshot fallback got HTTP ${response.status}`);
+            }
+            if (failures === FALLBACK_FAILURES_BEFORE_ERROR) {
+              onErrorRef.current?.(new Error(`Snapshot request failed (HTTP ${response.status})`));
+            }
+          }
         } catch (error) {
           if (!stopped && !pollController.signal.aborted) onErrorRef.current?.(error);
         }

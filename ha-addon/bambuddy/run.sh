@@ -50,7 +50,16 @@ export HOST=0.0.0.0
 
 mkdir -p /data/archive /data/logs
 
+# Which source this image was actually built from. An add-on update that
+# silently reuses a cached Docker layer looks exactly like one that worked, so
+# the commit goes in the log where it can be compared against the branch.
+BUILD_COMMIT="unknown"
+if [ -r /app/BUILD_COMMIT ]; then
+    BUILD_COMMIT="$(cat /app/BUILD_COMMIT)"
+fi
+
 echo "Bambuddy add-on starting on port ${PORT} (Home Assistant sign-in: ${BAMBUDDY_HA_INGRESS_AUTH}, role: ${HA_AUTH_ROLE})"
+echo "Bambuddy built from commit ${BUILD_COMMIT}"
 
 cd /app
 exec uvicorn backend.app.main:app \

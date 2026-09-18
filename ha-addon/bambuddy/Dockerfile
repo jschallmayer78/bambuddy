@@ -23,20 +23,53 @@ FROM node:22-bookworm-slim AS frontend-builder
 
 ARG BAMBUDDY_REPO=https://github.com/jschallmayer78/bambuddy.git
 ARG BAMBUDDY_REF=feature/ha-addon
+# What the cache is keyed on. A `git fetch` of a *branch* is the same shell
+# command whatever the branch now points at, so Docker reuses the layer it
+# built last time and the add-on installs an update that contains none of the
+# new commits — the image is byte-identical to the one it replaced, while the
+# Supervisor happily reports the new version. That trap cost a debugging round:
+# a camera fix sat pushed and installed for an evening without ever running.
+#
+# So the source is pinned by content, not by name. Fetching this URL is the one
+# instruction Docker re-runs on every build (it re-downloads and hashes the
+# response), and its body changes exactly when the branch head moves — which
+# breaks the cache for everything below it and nothing else. It must name the
+# same repository and ref as the two ARGs above.
+#
+# It is github.com's own commit feed rather than api.github.com on purpose: the
+# clone below already needs that host, so this adds no new reachability
+# requirement and no API rate limit to a build that would otherwise fail hard —
+# ADD cannot be made optional.
+#
+# Setting BAMBUDDY_REF to a full commit SHA pins the build outright and makes
+# this fetch redundant but harmless: the SHA is part of the command below, so a
+# changed SHA invalidates the cache on its own.
+ARG BAMBUDDY_HEAD_URL=https://github.com/jschallmayer78/bambuddy/commits/feature/ha-addon.atom
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Cloning the default branch by name breaks whenever a repository renames it,
-# which is exactly how the SnapCon add-on's build broke once. `--branch` takes
-# a tag or a branch; leaving BAMBUDDY_REF empty clones whatever the remote's
-# HEAD points at.
-RUN if [ -n "$BAMBUDDY_REF" ]; then \
-        git clone --depth 1 --branch "$BAMBUDDY_REF" "$BAMBUDDY_REPO" /src; \
-    else \
-        git clone --depth 1 "$BAMBUDDY_REPO" /src; \
-    fi
+ADD ${BAMBUDDY_HEAD_URL} /tmp/bambuddy-head.atom
+
+# `git fetch` rather than `git clone --branch`, because fetch takes a commit SHA
+# as well as a branch or tag — so the same line serves both "track the branch"
+# and "build exactly this commit". Cloning the default branch by name breaks
+# whenever a repository renames it, which is how the SnapCon add-on's build
+# broke once; leaving BAMBUDDY_REF empty follows the remote's own HEAD instead.
+#
+# The resolved commit is written into the image so the running add-on can say
+# which source it was built from — see run.sh. "I pushed the fix and nothing
+# changed" is otherwise unanswerable from the outside.
+RUN git init -q /src \
+    && git -C /src remote add origin "$BAMBUDDY_REPO" \
+    && if [ -n "$BAMBUDDY_REF" ]; then \
+           git -C /src fetch -q --depth 1 origin "$BAMBUDDY_REF"; \
+       else \
+           git -C /src fetch -q --depth 1 origin HEAD; \
+       fi \
+    && git -C /src checkout -q --detach FETCH_HEAD \
+    && git -C /src rev-parse HEAD > /src/BUILD_COMMIT
 
 WORKDIR /src/frontend
 RUN npm ci && npm run build
@@ -62,6 +95,7 @@ RUN pip install --root-user-action=ignore --upgrade 'pip>=26.1.2' \
 COPY --from=frontend-builder /src/backend /app/backend
 COPY --from=frontend-builder /src/static /app/static
 COPY --from=frontend-builder /src/slicer-api /app/slicer-api
+COPY --from=frontend-builder /src/BUILD_COMMIT /app/BUILD_COMMIT
 
 COPY run.sh /run.sh
 RUN chmod +x /run.sh
